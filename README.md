@@ -7,15 +7,16 @@ The primary goal of this script is to reduce the attack surface of the server, m
 ## Features
 
 - **System Updates**: Automatically updates and upgrades system packages to ensure the latest security patches are installed.
-- **Disables Unnecessary Services**: Stops and disables services such as Telnet, FTP, and rsync to minimize attack vectors.
+- **Disables Unnecessary Services**: Checks if services such as Telnet, FTP, and rsync are active before stopping and disabling them to minimize attack vectors without redundancy.
 - **Firewall Configuration**:
-  - Configures UFW (for Debian-based systems) or Firewalld (for Red Hat-based systems) to only allow necessary traffic (SSH, HTTP, HTTPS).
+  - Configures UFW (for Debian-based systems) or Firewalld (for Red Hat-based systems) to only allow necessary traffic (SSH, HTTP, HTTPS) and checks if the firewall is already configured.
 - **SSH Hardening**:
-  - Changes the default SSH port from 22 to 2200.
-  - Disables root login and password-based authentication.
-- **File Permissions**: Ensures strict file permissions for critical directories and system files.
-- **Automatic Security Updates**: Enables automatic installation of security updates for Debian and Red Hat-based systems.
-- **Fail2Ban Setup**: Protects against brute-force attacks by monitoring failed login attempts and banning offending IP addresses.
+  - Checks if the default SSH port (22) is used and changes it to port 2200 if necessary.
+  - Disables root login and password-based authentication, ensuring changes are only applied if required.
+- **File Permissions**: Ensures strict file permissions for critical directories and system files, only adjusting permissions if they aren't already correctly set.
+- **Automatic Security Updates**: Enables automatic installation of security updates for Debian and Red Hat-based systems, with checks to ensure these services are not redundantly installed or configured.
+- **Fail2Ban Setup**: Checks if Fail2Ban is already installed and enabled, protecting against brute-force attacks by monitoring failed login attempts and banning offending IP addresses.
+- **Idempotent Operations**: The script is designed to be idempotent, meaning it can be run multiple times without causing redundant actions or breaking the system.
 
 ## How to Use
 
@@ -24,6 +25,7 @@ The primary goal of this script is to reduce the attack surface of the server, m
    ```bash
    git clone https://github.com/yourusername/server-hardening-script.git
    cd server-hardening-script
+
    ```
 
 2. **Make the Script Executable:**
@@ -43,7 +45,7 @@ The primary goal of this script is to reduce the attack surface of the server, m
     sudo ./server_hardening.sh
     ```
 
-4. **Reboot the Server (Optional but Recommended):
+4. **Reboot the Server (Optional but Recommended):**
 
     After running the script, it's advisable to reboot the server to ensure all changes take effect.
 
