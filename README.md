@@ -1,0 +1,78 @@
+# Automated Linux Server Hardening Script
+
+This project contains a Bash script designed to automatically harden a Linux server by applying various security configurations. The script helps improve server security by disabling unused services, configuring firewall rules, securing SSH settings, and applying other security best practices.
+
+The primary goal of this script is to reduce the attack surface of the server, making it more resilient to cyberattacks. It is intended for administrators who want to automate the process of server hardening with minimal manual intervention.
+
+## Features
+
+- **System Updates**: Automatically updates and upgrades system packages to ensure the latest security patches are installed.
+- **Disables Unnecessary Services**: Stops and disables services such as Telnet, FTP, and rsync to minimize attack vectors.
+- **Firewall Configuration**:
+  - Configures UFW (for Debian-based systems) or Firewalld (for Red Hat-based systems) to only allow necessary traffic (SSH, HTTP, HTTPS).
+- **SSH Hardening**:
+  - Changes the default SSH port from 22 to 2200.
+  - Disables root login and password-based authentication.
+- **File Permissions**: Ensures strict file permissions for critical directories and system files.
+- **Automatic Security Updates**: Enables automatic installation of security updates for Debian and Red Hat-based systems.
+- **Fail2Ban Setup**: Protects against brute-force attacks by monitoring failed login attempts and banning offending IP addresses.
+
+## How to Use
+
+1. **Clone the Repository:**
+
+   ```bash
+   git clone https://github.com/yourusername/server-hardening-script.git
+   cd server-hardening-script
+   ```
+
+2. **Make the Script Executable:**
+
+    Navigate to the scripts directory and make the script executable:
+
+    ```bash
+    cd scripts
+    chmod +x server_hardening.sh
+    ```
+
+3. **Run the Script with Root Privileges:**
+
+    Execute the script using sudo to ensure it has the necessary permissions to modify the system configurations:
+    
+    ```bash
+    sudo ./server_hardening.sh
+    ```
+
+4. **Reboot the Server (Optional but Recommended):
+
+    After running the script, it's advisable to reboot the server to ensure all changes take effect.
+
+    ```bash
+    sudo reboot
+    ```
+
+## Compatibility
+
+This script is compatible with the following Linux distributions:
+
+- **Debian-based systems** (e.g., Ubuntu, Debian)
+- **Red Hat-based systems** (e.g., CentOS, RHEL)
+
+Ensure you are running the script as `root` or using `sudo` to allow it to make system-level changes.
+
+## Contributing
+
+Contributions are welcome! These implementations are based off experiences I have had at work. If you have ideas for improvements or new features, feel free to open an issue or create a pull request.
+
+### Contribution Guidelines
+
+- Fork the repository.
+- Create a new branch (`git checkout -b feature-branch`).
+- Commit your changes (`git commit -m 'Add a feature'`).
+- Push to the branch (`git push origin feature-branch`).
+- Open a Pull Request.
+
+Please ensure your code follows the existing style and includes comments where necessary.
+
+
+
