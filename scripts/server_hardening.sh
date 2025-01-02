@@ -1,164 +1,149 @@
 #!/bin/bash
 
 # Ensure the script is being run as root
-if [ "$EUID" -ne 0 ]
-then 
-  echo "Please run as root"
-  exit
-fi
-
-# Step 1: Update the system (Idempotent as it always checks for new packages)
-echo "Updating system packages..."
-if [ -f /etc/debian_version ]; then
-    apt update && apt upgrade -y
-elif [ -f /etc/redhat-release ]; then
-    yum update -y
-else
-    echo "Unsupported OS."
+if [ "$EUID" -ne 0 ]; then
+    echo "[ERROR] Please run this script as root."
     exit 1
 fi
 
-# Step 2: Disable unused services (Only stop/disable if the service is active)
-echo "Disabling unused services..."
-for service in telnet ftp rsync; do
-    if systemctl is-active --quiet $service.service; then
-        echo "Stopping and disabling $service..."
-        systemctl stop $service.service
-        systemctl disable $service.service
+log() {
+    echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $1"
+}
+
+error_exit() {
+    echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1"
+    exit 1
+}
+
+update_system() {
+    log "Updating system packages..."
+    if [ -f /etc/debian_version ]; then
+        apt update && apt upgrade -y || error_exit "Failed to update system packages."
+    elif [ -f /etc/redhat-release ]; then
+        yum update -y || error_exit "Failed to update system packages."
     else
-        echo "$service is already stopped and disabled."
+        error_exit "Unsupported OS. Exiting."
     fi
-done
+}
 
-# Step 3: Configure firewall (Check if UFW/Firewalld is active before configuring)
-echo "Configuring firewall..."
-if command -v ufw > /dev/null 2>&1; then
-    if ufw status | grep -q inactive; then
-        echo "Setting up UFW firewall..."
-        ufw default deny incoming
-        ufw default allow outgoing
-        ufw allow ssh
-        ufw allow http
-        ufw allow https
-        ufw enable
+disable_services() {
+    log "Disabling unused services..."
+    for service in telnet ftp rsync; do
+        if systemctl is-active --quiet "$service.service"; then
+            log "Stopping and disabling $service..."
+            systemctl stop "$service.service" && systemctl disable "$service.service" || \
+                error_exit "Failed to disable $service."
+        else
+            log "$service is already stopped and disabled."
+        fi
+    done
+}
+
+configure_firewall() {
+    log "Configuring firewall..."
+    if command -v ufw > /dev/null 2>&1; then
+        log "Using UFW for firewall management."
+        if ufw status | grep -q inactive; then
+            ufw default deny incoming
+            ufw default allow outgoing
+            ufw allow ssh
+            ufw allow http
+            ufw allow https
+            ufw enable || error_exit "Failed to enable UFW."
+        else
+            log "UFW is already active."
+        fi
+    elif command -v firewall-cmd > /dev/null 2>&1; then
+        log "Using Firewalld for firewall management."
+        firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set default zone."
+        firewall-cmd --permanent --add-service=ssh
+        firewall-cmd --permanent --add-service=http
+        firewall-cmd --permanent --add-service=https
+        firewall-cmd --reload || error_exit "Failed to reload Firewalld."
     else
-        echo "UFW is already active."
+        error_exit "No supported firewall tool found."
     fi
-elif command -v firewall-cmd > /dev/null 2>&1; then
-    echo "Setting up Firewalld firewall..."
-    firewall-cmd --permanent --set-default-zone=drop
-    firewall-cmd --permanent --add-service=ssh
-    firewall-cmd --permanent --add-service=http
-    firewall-cmd --permanent --add-service=https
-    firewall-cmd --reload
-else
-    echo "No firewall tool found. Skipping..."
-fi
+}
 
-# Step 4: Harden SSH (Check if changes have already been applied)
-echo "Hardening SSH configuration..."
+harden_ssh() {
+    log "Hardening SSH configuration..."
+    if [ ! -f /etc/ssh/sshd_config.bak ]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak || \
+            error_exit "Failed to create SSH configuration backup."
+        log "Backup created for SSH configuration."
+    else
+        log "SSH configuration backup already exists."
+    fi
 
-# Backup only if not already backed up
-if [ ! -f /etc/ssh/sshd_config.bak ]; then
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-    echo "Backup created for SSH configuration."
-else
-    echo "Backup for SSH configuration already exists."
-fi
-
-# Only change SSH config if necessary
-if grep -q "#Port 22" /etc/ssh/sshd_config; then
     sed -i 's/#Port 22/Port 2200/' /etc/ssh/sshd_config
-    echo "Changed SSH port to 2200."
-else
-    echo "SSH port already set to 2200 or non-default."
-fi
-
-if grep -q "PermitRootLogin yes" /etc/ssh/sshd_config; then
     sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-    echo "Disabled root login."
-else
-    echo "Root login is already disabled."
-fi
-
-if grep -q "#PasswordAuthentication yes" /etc/ssh/sshd_config; then
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
-    echo "Disabled password authentication."
-else
-    echo "Password authentication already disabled."
-fi
 
-# Restart SSH service only if config has changed
-systemctl restart sshd
-echo "SSH service restarted."
+    systemctl restart sshd || error_exit "Failed to restart SSH service."
+    log "SSH configuration hardened and service restarted."
+}
 
-# Step 5: Set secure file permissions (Only apply changes if permissions are incorrect)
-echo "Setting secure file permissions..."
+set_secure_permissions() {
+    log "Setting secure file permissions..."
+    chmod 700 /root || error_exit "Failed to set permissions for /root."
+    chmod 600 /etc/ssh/sshd_config || error_exit "Failed to set permissions for /etc/ssh/sshd_config."
 
-if [ "$(stat -c %a /root)" != "700" ]; then
-    chmod 700 /root
-    echo "Permissions for /root set to 700."
-else
-    echo "Permissions for /root already set correctly."
-fi
+    for file in /etc/passwd /etc/shadow; do
+        chmod 600 "$file" || error_exit "Failed to set permissions for $file."
+    done
+    log "File permissions set securely."
+}
 
-if [ "$(stat -c %a /etc/ssh/sshd_config)" != "600" ]; then
-    chmod 600 /etc/ssh/sshd_config
-    echo "Permissions for /etc/ssh/sshd_config set to 600."
-else
-    echo "Permissions for /etc/ssh/sshd_config already set correctly."
-fi
-
-for file in /etc/passwd /etc/shadow; do
-    if [ "$(stat -c %a $file)" != "600" ]; then
-        chmod 600 $file
-        echo "Permissions for $file set to 600."
-    else
-        echo "Permissions for $file already set correctly."
+enable_auto_updates() {
+    log "Enabling automatic security updates..."
+    if [ -f /etc/debian_version ]; then
+        apt install unattended-upgrades -y || error_exit "Failed to install unattended-upgrades."
+        dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
+    elif [ -f /etc/redhat-release ]; then
+        yum install yum-cron -y || error_exit "Failed to install yum-cron."
+        systemctl enable yum-cron || error_exit "Failed to enable yum-cron."
+        systemctl start yum-cron || error_exit "Failed to start yum-cron."
     fi
-done
+    log "Automatic security updates enabled."
+}
 
-# Step 6: Enable automatic security updates (Check if it's already enabled)
-echo "Enabling automatic security updates..."
-if [ -f /etc/debian_version ]; then
-    if dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -q "install ok installed"; then
-        echo "Unattended upgrades already installed."
-    else
-        apt install unattended-upgrades -y
-        dpkg-reconfigure --priority=low unattended-upgrades
-        echo "Unattended upgrades installed and configured."
+install_fail2ban() {
+    log "Installing and configuring Fail2Ban..."
+    if [ -f /etc/debian_version ]; then
+        apt install fail2ban -y || error_exit "Failed to install Fail2Ban."
+    elif [ -f /etc/redhat-release ]; then
+        yum install fail2ban -y || error_exit "Failed to install Fail2Ban."
     fi
-elif [ -f /etc/redhat-release ]; then
-    if yum list installed yum-cron &>/dev/null; then
-        echo "yum-cron already installed."
-    else
-        yum install yum-cron -y
-        systemctl enable yum-cron
-        systemctl start yum-cron
-        echo "yum-cron installed and enabled."
-    fi
-fi
+    systemctl enable fail2ban || error_exit "Failed to enable Fail2Ban."
+    systemctl start fail2ban || error_exit "Failed to start Fail2Ban."
+    log "Fail2Ban installed and running."
+}
 
-# Step 7: Install and configure fail2ban (Check if it's already installed)
-echo "Installing fail2ban..."
-if [ -f /etc/debian_version ]; then
-    if dpkg-query -W -f='${Status}' fail2ban 2>/dev/null | grep -q "install ok installed"; then
-        echo "Fail2ban already installed."
-    else
-        apt install fail2ban -y
-        systemctl enable fail2ban
-        systemctl start fail2ban
-        echo "Fail2ban installed and enabled."
-    fi
-elif [ -f /etc/redhat-release ]; then
-    if yum list installed fail2ban &>/dev/null; then
-        echo "Fail2ban already installed."
-    else
-        yum install fail2ban -y
-        systemctl enable fail2ban
-        systemctl start fail2ban
-        echo "Fail2ban installed and enabled."
-    fi
-fi
+apply_kernel_hardening() {
+    log "Applying kernel hardening settings..."
+    cat <<EOF > /etc/sysctl.d/99-hardening.conf
+net.ipv4.ip_forward=0
+net.ipv4.conf.all.send_redirects=0
+net.ipv4.conf.default.send_redirects=0
+net.ipv4.tcp_syncookies=1
+net.ipv4.conf.all.rp_filter=1
+net.ipv4.conf.default.rp_filter=1
+net.ipv4.conf.all.accept_source_route=0
+net.ipv4.conf.default.accept_source_route=0
+kernel.randomize_va_space=2
+EOF
+    sysctl --system || error_exit "Failed to apply kernel hardening settings."
+    log "Kernel hardening settings applied."
+}
 
-echo "Server hardening complete!"
+# Main Script Execution
+log "Starting server hardening process..."
+update_system
+disable_services
+configure_firewall
+harden_ssh
+set_secure_permissions
+enable_auto_updates
+install_fail2ban
+apply_kernel_hardening
+log "Server hardening complete!"
