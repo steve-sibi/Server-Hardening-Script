@@ -4,7 +4,9 @@
 
 Server hardening refers to the process of securing a server by reducing its attack surface. This project automates several important hardening steps to enhance the security posture of a Linux-based server while ensuring safe, idempotent operations. The script checks the system's current state before applying any changes, allowing it to be run multiple times without introducing redundant actions or breaking system configurations.
 
-## Security Measures Implemented
+# Security Measures Implemented
+
+## server_hardening.sh
 
 ### 1. System Updates
 Regular updates are crucial for patching known vulnerabilities. The script ensures that all system packages are updated to their latest versions, reducing the risk of exploits. This step is safe to run repeatedly, as the package manager handles updates without redundancy.
