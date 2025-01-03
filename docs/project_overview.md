@@ -27,6 +27,13 @@ To ensure the server remains protected, the script enables automatic installatio
 ### 7. Fail2Ban Setup
 Fail2Ban is a log-based intrusion prevention tool that monitors failed login attempts and bans IP addresses exhibiting suspicious behavior, helping to prevent brute-force attacks. The script checks if Fail2Ban is already installed and enabled before attempting to install or configure it, ensuring idempotent behavior and avoiding redundant installations.
 
+### 8. Kernel Hardening
+This script applies kernel-level hardening measures to protect the server against common network-based attacks and improve overall system security. These measures include:
+- Disabling IP forwarding.
+- Preventing source routing.
+- Enabling TCP SYN cookies to protect against SYN flood attacks.
+- Randomizing virtual address space layout (ASLR) to prevent memory-based attacks.
+
 ## Customization
 
 The script is designed to be flexible and customizable. Users can modify it to suit their specific server environments, such as:
