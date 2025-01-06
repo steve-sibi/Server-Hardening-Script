@@ -36,6 +36,8 @@ This script applies kernel-level hardening measures to protect the server agains
 - Enabling TCP SYN cookies to protect against SYN flood attacks.
 - Randomizing virtual address space layout (ASLR) to prevent memory-based attacks.
 
+## user_account_hardening.sh
+
 ## Customization
 
 The script is designed to be flexible and customizable. Users can modify it to suit their specific server environments, such as:
