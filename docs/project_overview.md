@@ -38,6 +38,8 @@ This script applies kernel-level hardening measures to protect the server agains
 
 ## user_account_hardening.sh
 
+## apache_nginx_web_hardening.sh
+
 ## Customization
 
 The script is designed to be flexible and customizable. Users can modify it to suit their specific server environments, such as:
