@@ -37,6 +37,31 @@ This script applies kernel-level hardening measures to protect the server agains
 - Randomizing virtual address space layout (ASLR) to prevent memory-based attacks.
 
 ## user_account_hardening.sh
+Root Privilege Check:
+
+Ensures the script is executed with root permissions. If not, it exits with an error message.
+Logging Mechanism:
+
+Provides timestamped logs for both informational messages and error handling, making the script's execution easier to track and debug.
+Disabling Inactive User Accounts:
+
+Identifies and removes user accounts that have never logged in (based on the last 30 days of activity) using the lastlog command and userdel.
+Outputs a message if no inactive accounts are found.
+Enforcing Password Policies:
+
+Updates the /etc/login.defs file to set:
+A maximum password age of 90 days.
+A minimum password age of 1 day.
+A password expiration warning 14 days before expiration.
+Configures stricter password quality requirements in /etc/security/pwquality.conf, including:
+Minimum password length of 12 characters.
+Enforced inclusion of at least one digit, uppercase letter, lowercase letter, and special character.
+Main Execution:
+
+The script runs the functions sequentially:
+Disables inactive accounts.
+Configures password policies.
+Outputs progress logs to inform the user about each step of the process.
 
 ## apache_nginx_web_hardening.sh
 
