@@ -63,7 +63,7 @@ This script applies kernel-level hardening measures to protect the server agains
    2. Configures password policies.
 - Outputs progress logs to inform the user about each step of the process.
 
-The script aims to strengthen system security by:
+### The script aims to strengthen system security by:
 - Reducing the risk of unauthorized access through inactive accounts.
 - Enforcing strong password policies to mitigate password-based attacks.
 
