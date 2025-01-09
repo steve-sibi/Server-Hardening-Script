@@ -63,6 +63,11 @@ Disables inactive accounts.
 Configures password policies.
 Outputs progress logs to inform the user about each step of the process.
 
+The script aims to strengthen system security by:
+
+Reducing the risk of unauthorized access through inactive accounts.
+Enforcing strong password policies to mitigate password-based attacks.
+
 ## apache_nginx_web_hardening.sh
 
 ## log_monitoring.sh
