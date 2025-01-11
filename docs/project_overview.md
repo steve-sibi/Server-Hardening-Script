@@ -36,6 +36,8 @@ This script applies kernel-level hardening measures to protect the server agains
 - Enabling TCP SYN cookies to protect against SYN flood attacks.
 - Randomizing virtual address space layout (ASLR) to prevent memory-based attacks.
 
+---
+
 ## user_account_hardening.sh
 
 ### Root Privilege Check:
@@ -67,7 +69,37 @@ This script applies kernel-level hardening measures to protect the server agains
 - Reducing the risk of unauthorized access through inactive accounts.
 - Enforcing strong password policies to mitigate password-based attacks.
 
+---
+
 ## apache_nginx_web_hardening.sh
+### Root User Verification:
+Ensures the script is executed with root privileges to make necessary changes to system configurations.
+
+### Logging:
+Provides clear and timestamped logs for both standard operations (log()) and error handling (error_exit()), enhancing script transparency and debugging.
+
+### Web Server Detection:
+Automatically identifies whether Apache or Nginx is installed on the system. If neither is found, the script terminates with an error message.
+
+### Hardening Apache:
+Enables the headers module if not already enabled.
+Appends security headers to the security.conf configuration file:
+
+### X-Frame-Options: 
+    - DENY: Prevents clickjacking by disallowing the embedding of the site in iframes.
+### X-Content-Type-Options: 
+    - nosniff: Prevents browsers from interpreting files as a different MIME type.
+### Content-Security-Policy: 
+    - default-src 'self': Restricts the loading of content (e.g., scripts, images) to the same origin as the web server.
+Restarts Apache to apply changes.
+
+### Hardening Nginx:
+Adds security headers to a custom configuration file (/etc/nginx/conf.d/security.conf):
+Same headers as described for Apache.
+Restarts Nginx to apply changes.
+
+
+---
 
 ## log_monitoring.sh
 
