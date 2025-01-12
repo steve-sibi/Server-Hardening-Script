@@ -102,30 +102,29 @@ Restarts Nginx to apply changes.
 ---
 
 ## log_monitoring.sh
-Root User Verification:
-
+### Root User Verification:
 Ensures the script is executed with root privileges to modify system configurations and install necessary packages.
-Logging and Error Handling:
 
+### Logging and Error Handling:
 Provides timestamped logs for key actions (log()), enhancing clarity during execution.
 Gracefully exits the script with error messages if any critical operation fails (error_exit()).
-rsyslog Installation:
 
+### rsyslog Installation:
 Detects the Linux distribution (Debian-based or Red Hat-based) and installs the rsyslog package using the appropriate package manager (apt or yum).
 Enables and starts the rsyslog service to ensure that log messages are properly captured and recorded.
-Log Rotation Configuration:
 
+### Log Rotation Configuration:
 Sets up a custom log rotation policy by creating a configuration file in /etc/logrotate.d/.
-Configures the following:
-Targets critical log files such as /var/log/auth.log, /var/log/syslog, and /var/log/messages.
-Retains logs for 7 days and rotates them daily.
-Compresses old log files to save disk space.
-Skips rotation if logs are missing or empty.
-Ensures that rsyslog is reloaded after each rotation to maintain proper logging.
-Automation:
 
+#### Configures the following:
+- Targets critical log files such as /var/log/auth.log, /var/log/syslog, and /var/log/messages.
+- Retains logs for 7 days and rotates them daily.
+- Compresses old log files to save disk space.
+- Skips rotation if logs are missing or empty.
+- Ensures that rsyslog is reloaded after each rotation to maintain proper logging.
+
+### Automation:
 The script is designed to be executed once but can be reused to reapply configurations or troubleshoot logging setup issues.
-
 
 ## Customization
 
