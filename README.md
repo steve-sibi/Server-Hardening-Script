@@ -17,17 +17,17 @@ The primary goal of this script is to reduce the attack surface of the server, m
 - **Automatic Security Updates**: Enables automatic installation of security updates for Debian and Red Hat-based systems, with checks to ensure these services are not redundantly installed or configured.
 - **Fail2Ban Setup**: Checks if Fail2Ban is already installed and enabled, protecting against brute-force attacks by monitoring failed login attempts and banning offending IP addresses.
 - **Idempotent Operations**: The script is designed to be idempotent, meaning it can be run multiple times without causing redundant actions or breaking the system.
-
-Root Privilege Verification:
+---
+- Root Privilege Verification:
 
 Ensures the script is run as root to perform necessary system-level operations.
-
-Automated rsyslog Installation:
+---
+- Automated rsyslog Installation:
 
 Detects the server's Linux distribution and installs the rsyslog package using the appropriate package manager (apt for Debian-based systems, yum for Red Hat-based systems).
 
 Enables and starts the rsyslog service to ensure logs are captured properly.
-
+---
 Log Rotation Configuration:
 
 Creates a custom log rotation policy for critical log files:
