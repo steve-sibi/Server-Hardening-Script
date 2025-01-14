@@ -18,6 +18,38 @@ The primary goal of this script is to reduce the attack surface of the server, m
 - **Fail2Ban Setup**: Checks if Fail2Ban is already installed and enabled, protecting against brute-force attacks by monitoring failed login attempts and banning offending IP addresses.
 - **Idempotent Operations**: The script is designed to be idempotent, meaning it can be run multiple times without causing redundant actions or breaking the system.
 
+Root Privilege Verification:
+
+Ensures the script is run as root to perform necessary system-level operations.
+
+Automated rsyslog Installation:
+
+Detects the server's Linux distribution and installs the rsyslog package using the appropriate package manager (apt for Debian-based systems, yum for Red Hat-based systems).
+
+Enables and starts the rsyslog service to ensure logs are captured properly.
+
+Log Rotation Configuration:
+
+Creates a custom log rotation policy for critical log files:
+
+/var/log/auth.log
+
+/var/log/syslog
+
+/var/log/messages
+
+Retains logs for 7 days and rotates them daily.
+
+Compresses old log files to save disk space.
+
+Reloads the rsyslog service after each log rotation.
+
+Error Handling and Logging:
+
+Provides clear logs for each operation, including error messages if any step fails.
+
+Ensures the script exits gracefully if an error occurs.
+
 ## How to Use
 
 1. **Clone the Repository:**
