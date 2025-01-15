@@ -2,72 +2,92 @@
 
 # Ensure the script is being run as root
 if [ "$EUID" -ne 0 ]; then
+    # If the effective user ID is not 0 (root), display an error message and exit
     echo "[ERROR] Please run this script as root."
     exit 1
 fi
 
+# Log function to standardize informational messages with timestamps
 log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $1"
 }
 
+# Function to log error messages and exit the script with a failure status
 error_exit() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1"
     exit 1
 }
 
+# Function to update the system's package repositories and installed packages
 update_system() {
     log "Updating system packages..."
     if [ -f /etc/debian_version ]; then
+        # Update packages on Debian-based systems
         apt update && apt upgrade -y || error_exit "Failed to update system packages."
     elif [ -f /etc/redhat-release ]; then
+        # Update packages on Red Hat-based systems
         yum update -y || error_exit "Failed to update system packages."
     else
+        # Exit if the operating system is unsupported
         error_exit "Unsupported OS. Exiting."
     fi
 }
 
+# Function to disable unnecessary and potentially insecure services
 disable_services() {
     log "Disabling unused services..."
     for service in telnet ftp rsync; do
         if systemctl is-active --quiet "$service.service"; then
+            # Stop and disable the service if it is active
             log "Stopping and disabling $service..."
             systemctl stop "$service.service" && systemctl disable "$service.service" || \
                 error_exit "Failed to disable $service."
         else
+            # Inform if the service is already disabled
             log "$service is already stopped and disabled."
         fi
     done
 }
 
+# Function to configure and enable a firewall
 configure_firewall() {
     log "Configuring firewall..."
     if command -v ufw > /dev/null 2>&1; then
+        # Configure UFW (Uncomplicated Firewall) if it is installed
         log "Using UFW for firewall management."
         if ufw status | grep -q inactive; then
+            # Set default policies and allow common services
             ufw default deny incoming
             ufw default allow outgoing
             ufw allow ssh
             ufw allow http
             ufw allow https
+            # Enable UFW with error handling
             ufw enable || error_exit "Failed to enable UFW."
         else
+            # Inform if UFW is already active
             log "UFW is already active."
         fi
     elif command -v firewall-cmd > /dev/null 2>&1; then
+        # Configure Firewalld if it is installed
         log "Using Firewalld for firewall management."
         firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set default zone."
         firewall-cmd --permanent --add-service=ssh
         firewall-cmd --permanent --add-service=http
         firewall-cmd --permanent --add-service=https
+        # Reload Firewalld configuration
         firewall-cmd --reload || error_exit "Failed to reload Firewalld."
     else
+        # Exit if no firewall tool is found
         error_exit "No supported firewall tool found."
     fi
 }
 
+# Function to harden the SSH configuration
 harden_ssh() {
     log "Hardening SSH configuration..."
     if [ ! -f /etc/ssh/sshd_config.bak ]; then
+        # Backup the SSH configuration file if a backup does not exist
         cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak || \
             error_exit "Failed to create SSH configuration backup."
         log "Backup created for SSH configuration."
@@ -75,25 +95,30 @@ harden_ssh() {
         log "SSH configuration backup already exists."
     fi
 
+    # Modify SSH configuration for enhanced security
     sed -i 's/#Port 22/Port 2200/' /etc/ssh/sshd_config
     sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 
+    # Restart SSH service to apply changes
     systemctl restart sshd || error_exit "Failed to restart SSH service."
     log "SSH configuration hardened and service restarted."
 }
 
+# Function to set secure file and directory permissions
 set_secure_permissions() {
     log "Setting secure file permissions..."
     chmod 700 /root || error_exit "Failed to set permissions for /root."
     chmod 600 /etc/ssh/sshd_config || error_exit "Failed to set permissions for /etc/ssh/sshd_config."
 
+    # Secure permissions for critical system files
     for file in /etc/passwd /etc/shadow; do
         chmod 600 "$file" || error_exit "Failed to set permissions for $file."
     done
     log "File permissions set securely."
 }
 
+# Function to enable automatic security updates
 enable_auto_updates() {
     log "Enabling automatic security updates..."
     if [ -f /etc/debian_version ]; then
@@ -107,6 +132,7 @@ enable_auto_updates() {
     log "Automatic security updates enabled."
 }
 
+# Function to install and configure Fail2Ban for intrusion prevention
 install_fail2ban() {
     log "Installing and configuring Fail2Ban..."
     if [ -f /etc/debian_version ]; then
@@ -119,6 +145,7 @@ install_fail2ban() {
     log "Fail2Ban installed and running."
 }
 
+# Function to apply kernel hardening settings
 apply_kernel_hardening() {
     log "Applying kernel hardening settings..."
     cat <<EOF > /etc/sysctl.d/99-hardening.conf
