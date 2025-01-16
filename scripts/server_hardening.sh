@@ -74,14 +74,12 @@ update_system() {
 # Function to disable unnecessary and potentially insecure services
 disable_services() {
     log "Disabling unused services..."
-    for service in telnet ftp rsync; do
+    for service in "${SERVICES_TO_DISABLE[@]}"; do
         if systemctl is-active --quiet "$service.service"; then
-            # Stop and disable the service if it is active
             log "Stopping and disabling $service..."
             systemctl stop "$service.service" && systemctl disable "$service.service" || \
                 error_exit "Failed to disable $service."
         else
-            # Inform if the service is already disabled
             log "$service is already stopped and disabled."
         fi
     done
