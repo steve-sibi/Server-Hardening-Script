@@ -38,19 +38,37 @@ error_exit() {
     exit 1
 }
 
+# Abstract package manager commands
+if command -v apt > /dev/null 2>&1; then
+    PM_UPDATE="apt update && apt upgrade -y"
+    PM_INSTALL="apt install -y"
+    PM_CONFIGURE_AUTO_UPDATES() {
+        apt install unattended-upgrades -y || error_exit "Failed to install unattended-upgrades."
+        dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
+    }
+elif command -v dnf > /dev/null 2>&1; then
+    PM_UPDATE="dnf update -y"
+    PM_INSTALL="dnf install -y"
+    PM_CONFIGURE_AUTO_UPDATES() {
+        dnf install dnf-automatic -y || error_exit "Failed to install dnf-automatic."
+        systemctl enable --now dnf-automatic.timer || error_exit "Failed to enable dnf-automatic.timer."
+    }
+elif command -v yum > /dev/null 2>&1; then
+    PM_UPDATE="yum update -y"
+    PM_INSTALL="yum install -y"
+    PM_CONFIGURE_AUTO_UPDATES() {
+        yum install yum-cron -y || error_exit "Failed to install yum-cron."
+        systemctl enable yum-cron || error_exit "Failed to enable yum-cron."
+        systemctl start yum-cron || error_exit "Failed to start yum-cron."
+    }
+else
+    error_exit "No supported package manager found. Exiting."
+fi
+
 # Function to update the system's package repositories and installed packages
 update_system() {
     log "Updating system packages..."
-    if [ -f /etc/debian_version ]; then
-        # Update packages on Debian-based systems
-        apt update && apt upgrade -y || error_exit "Failed to update system packages."
-    elif [ -f /etc/redhat-release ]; then
-        # Update packages on Red Hat-based systems
-        yum update -y || error_exit "Failed to update system packages."
-    else
-        # Exit if the operating system is unsupported
-        error_exit "Unsupported OS. Exiting."
-    fi
+    eval "$PM_UPDATE" || error_exit "Failed to update system packages."
 }
 
 # Function to disable unnecessary and potentially insecure services
