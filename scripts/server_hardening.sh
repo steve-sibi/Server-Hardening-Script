@@ -23,7 +23,7 @@ fi
 # Ensure the script is being run as root
 if [ "$EUID" -ne 0 ]; then
     # If the effective user ID is not 0 (root), display an error message and exit
-    echo "[ERROR] Please run this script as root."
+    echo "[ERROR] Please run this script as root." | tee -a "$ERROR_LOG" >&2
     exit 1
 fi
 
@@ -34,7 +34,7 @@ log() {
 
 # Function to log error messages and exit the script with a failure status
 error_exit() {
-    echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1"
+    echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1" | tee -a "$ERROR_LOG" >&2
     exit 1
 }
 
