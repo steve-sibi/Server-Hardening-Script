@@ -157,6 +157,13 @@ set_secure_permissions() {
 # Function to enable automatic security updates
 enable_auto_updates() {
     log "Enabling automatic security updates..."
+    PM_CONFIGURE_AUTO_UPDATES
+    log "Automatic security updates enabled."
+}
+
+# Function to enable automatic security updates
+enable_auto_updates() {
+    log "Enabling automatic security updates..."
     if [ -f /etc/debian_version ]; then
         apt install unattended-upgrades -y || error_exit "Failed to install unattended-upgrades."
         dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
@@ -199,8 +206,37 @@ EOF
     log "Kernel hardening settings applied."
 }
 
-# Main Script Execution
-log "Starting server hardening process..."
+# Function to manage user accounts and enforce password policies
+manage_users() {
+    log "Managing user accounts and enforcing password policies..."
+
+    # Remove or disable unnecessary user accounts
+    UNNECESSARY_USERS=("games" "ftp" "mail")
+    for user in "${UNNECESSARY_USERS[@]}"; do
+        if id "$user" &>/dev/null; then
+            log "Disabling user account: $user"
+            usermod -L "$user" || error_exit "Failed to lock user account $user."
+        else
+            log "User account $user does not exist. Skipping."
+        fi
+    done
+
+    # Enforce strong password policies using PAM
+    PAM_COMMON_PASSWORD="/etc/pam.d/common-password"
+    if [ -f "$PAM_COMMON_PASSWORD" ]; then
+        log "Configuring PAM for strong password policies..."
+        sed -i 's/^password\s\+requisite\s\+pam_pwquality.so.*/password requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1/' "$PAM_COMMON_PASSWORD" || \
+            error_exit "Failed to configure PAM password policies."
+        log "PAM password policies updated."
+    fi
+
+    log "User account management and password policies enforced."
+}
+
+# --------------------------- Main Script Execution -------------------------- #
+
+log "================= Starting Server Hardening Process ================="
+
 update_system
 disable_services
 configure_firewall
@@ -209,4 +245,6 @@ set_secure_permissions
 enable_auto_updates
 install_fail2ban
 apply_kernel_hardening
-log "Server hardening complete!"
+manage_users
+
+log "================= Server Hardening Process Complete! ================="
