@@ -1,5 +1,25 @@
 #!/bin/bash
 
+# --------------------------- Configuration Variables ------------------------ #
+
+# Configurable SSH port
+SSH_PORT=2200
+
+# Services to disable (add or remove services as needed)
+SERVICES_TO_DISABLE=("telnet" "ftp" "rsync" "nfs" "smb")
+
+# Error log file
+ERROR_LOG="/var/log/server_hardening_error.log"
+
+# Firewall allowed ports (add or remove ports as needed)
+FIREWALL_ALLOWED_PORTS=("ssh" "http" "https")
+# Include custom SSH port if different from default
+if [ "$SSH_PORT" -ne 22 ]; then
+    FIREWALL_ALLOWED_PORTS+=("$SSH_PORT/tcp")
+fi
+
+# --------------------------- Function Definitions --------------------------- #
+
 # Ensure the script is being run as root
 if [ "$EUID" -ne 0 ]; then
     # If the effective user ID is not 0 (root), display an error message and exit
