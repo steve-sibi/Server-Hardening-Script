@@ -89,33 +89,42 @@ disable_services() {
 configure_firewall() {
     log "Configuring firewall..."
     if command -v ufw > /dev/null 2>&1; then
-        # Configure UFW (Uncomplicated Firewall) if it is installed
         log "Using UFW for firewall management."
         if ufw status | grep -q inactive; then
-            # Set default policies and allow common services
+            log "Setting default UFW policies..."
             ufw default deny incoming
             ufw default allow outgoing
-            ufw allow ssh
-            ufw allow http
-            ufw allow https
-            # Enable UFW with error handling
-            ufw enable || error_exit "Failed to enable UFW."
+            for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
+                ufw allow "$port" || error_exit "Failed to allow port $port in UFW."
+            done
+            ufw --force enable || error_exit "Failed to enable UFW."
         else
-            # Inform if UFW is already active
-            log "UFW is already active."
+            log "UFW is already active. Ensuring allowed ports are configured..."
+            for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
+                if ! ufw status | grep -qw "$port"; then
+                    ufw allow "$port" || error_exit "Failed to allow port $port in UFW."
+                fi
+            done
+            log "UFW is active and allowed ports are configured."
         fi
     elif command -v firewall-cmd > /dev/null 2>&1; then
-        # Configure Firewalld if it is installed
         log "Using Firewalld for firewall management."
-        firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set default zone."
-        firewall-cmd --permanent --add-service=ssh
-        firewall-cmd --permanent --add-service=http
-        firewall-cmd --permanent --add-service=https
-        # Reload Firewalld configuration
+        if ! systemctl is-active --quiet firewalld; then
+            systemctl enable firewalld || error_exit "Failed to enable Firewalld."
+            systemctl start firewalld || error_exit "Failed to start Firewalld."
+        fi
+        for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
+            if [[ "$port" == *"/tcp" ]]; then
+                PORT_NUM=$(echo "$port" | cut -d'/' -f1)
+                firewall-cmd --permanent --add-port="$PORT_NUM/tcp" || error_exit "Failed to add port $PORT_NUM/tcp to Firewalld."
+            else
+                firewall-cmd --permanent --add-service="$port" || error_exit "Failed to add service $port to Firewalld."
+            fi
+        done
+        firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set default zone in Firewalld."
         firewall-cmd --reload || error_exit "Failed to reload Firewalld."
     else
-        # Exit if no firewall tool is found
-        error_exit "No supported firewall tool found."
+        error_exit "No supported firewall tool found. Exiting."
     fi
 }
 
