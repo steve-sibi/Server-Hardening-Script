@@ -131,19 +131,45 @@ configure_firewall() {
 # Function to harden the SSH configuration
 harden_ssh() {
     log "Hardening SSH configuration..."
-    if [ ! -f /etc/ssh/sshd_config.bak ]; then
-        # Backup the SSH configuration file if a backup does not exist
-        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak || \
-            error_exit "Failed to create SSH configuration backup."
+    SSH_CONFIG="/etc/ssh/sshd_config"
+    SSH_BACKUP="/etc/ssh/sshd_config.bak"
+
+    if [ ! -f "$SSH_BACKUP" ]; then
+        cp "$SSH_CONFIG" "$SSH_BACKUP" || error_exit "Failed to create SSH configuration backup."
         log "Backup created for SSH configuration."
     else
         log "SSH configuration backup already exists."
     fi
 
-    # Modify SSH configuration for enhanced security
-    sed -i 's/#Port 22/Port 2200/' /etc/ssh/sshd_config
-    sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    # Update SSH port if not already set
+    if ! grep -q "^Port $SSH_PORT" "$SSH_CONFIG"; then
+        sed -i "s/^#Port 22/Port $SSH_PORT/" "$SSH_CONFIG" || error_exit "Failed to set SSH port."
+        log "SSH port set to $SSH_PORT."
+    else
+        log "SSH port is already set to $SSH_PORT."
+    fi
+
+    # Disable root login if not already disabled
+    if grep -q "^PermitRootLogin yes" "$SSH_CONFIG"; then
+        sed -i "s/^PermitRootLogin yes/PermitRootLogin no/" "$SSH_CONFIG" || error_exit "Failed to disable root login via SSH."
+        log "Disabled root login via SSH."
+    else
+        log "Root login via SSH is already disabled."
+    fi
+
+    # Disable password authentication if not already disabled
+    if grep -q "^PasswordAuthentication yes" "$SSH_CONFIG"; then
+        sed -i "s/^PasswordAuthentication yes/PasswordAuthentication no/" "$SSH_CONFIG" || error_exit "Failed to disable password authentication via SSH."
+        log "Disabled password authentication via SSH."
+    else
+        log "Password authentication via SSH is already disabled."
+    fi
+
+    # Ensure SSH uses protocol 2
+    if grep -q "^#Protocol 2" "$SSH_CONFIG"; then
+        sed -i "s/^#Protocol 2/Protocol 2/" "$SSH_CONFIG" || error_exit "Failed to set SSH protocol to 2."
+        log "Set SSH protocol to 2."
+    fi
 
     # Restart SSH service to apply changes
     systemctl restart sshd || error_exit "Failed to restart SSH service."
