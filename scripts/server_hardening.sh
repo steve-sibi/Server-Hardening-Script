@@ -179,13 +179,33 @@ harden_ssh() {
 # Function to set secure file and directory permissions
 set_secure_permissions() {
     log "Setting secure file permissions..."
-    chmod 700 /root || error_exit "Failed to set permissions for /root."
-    chmod 600 /etc/ssh/sshd_config || error_exit "Failed to set permissions for /etc/ssh/sshd_config."
+
+    # Set permissions for /root
+    if [ "$(stat -c "%a" /root)" -ne 700 ]; then
+        chmod 700 /root || error_exit "Failed to set permissions for /root."
+        log "Set /root permissions to 700."
+    else
+        log "/root permissions are already set to 700."
+    fi
+
+    # Set permissions for SSH config
+    if [ "$(stat -c "%a" /etc/ssh/sshd_config)" -ne 600 ]; then
+        chmod 600 /etc/ssh/sshd_config || error_exit "Failed to set permissions for /etc/ssh/sshd_config."
+        log "Set /etc/ssh/sshd_config permissions to 600."
+    else
+        log "/etc/ssh/sshd_config permissions are already set to 600."
+    fi
 
     # Secure permissions for critical system files
     for file in /etc/passwd /etc/shadow; do
-        chmod 600 "$file" || error_exit "Failed to set permissions for $file."
+        if [ "$(stat -c "%a" "$file")" -ne 600 ]; then
+            chmod 600 "$file" || error_exit "Failed to set permissions for $file."
+            log "Set $file permissions to 600."
+        else
+            log "$file permissions are already set to 600."
+        fi
     done
+
     log "File permissions set securely."
 }
 
