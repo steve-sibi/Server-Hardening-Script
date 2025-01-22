@@ -216,20 +216,6 @@ enable_auto_updates() {
     log "Automatic security updates enabled."
 }
 
-# Function to enable automatic security updates
-enable_auto_updates() {
-    log "Enabling automatic security updates..."
-    if [ -f /etc/debian_version ]; then
-        apt install unattended-upgrades -y || error_exit "Failed to install unattended-upgrades."
-        dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
-    elif [ -f /etc/redhat-release ]; then
-        yum install yum-cron -y || error_exit "Failed to install yum-cron."
-        systemctl enable yum-cron || error_exit "Failed to enable yum-cron."
-        systemctl start yum-cron || error_exit "Failed to start yum-cron."
-    fi
-    log "Automatic security updates enabled."
-}
-
 # Function to install and configure Fail2Ban for intrusion prevention
 install_fail2ban() {
     log "Installing and configuring Fail2Ban..."
