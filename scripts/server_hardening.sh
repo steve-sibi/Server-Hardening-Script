@@ -219,11 +219,7 @@ enable_auto_updates() {
 # Function to install and configure Fail2Ban for intrusion prevention
 install_fail2ban() {
     log "Installing and configuring Fail2Ban..."
-    if [ -f /etc/debian_version ]; then
-        apt install fail2ban -y || error_exit "Failed to install Fail2Ban."
-    elif [ -f /etc/redhat-release ]; then
-        yum install fail2ban -y || error_exit "Failed to install Fail2Ban."
-    fi
+    eval "$PM_INSTALL fail2ban" || error_exit "Failed to install Fail2Ban."
     systemctl enable fail2ban || error_exit "Failed to enable Fail2Ban."
     systemctl start fail2ban || error_exit "Failed to start Fail2Ban."
     log "Fail2Ban installed and running."
