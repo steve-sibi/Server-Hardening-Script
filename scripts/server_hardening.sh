@@ -228,17 +228,38 @@ install_fail2ban() {
 # Function to apply kernel hardening settings
 apply_kernel_hardening() {
     log "Applying kernel hardening settings..."
-    cat <<EOF > /etc/sysctl.d/99-hardening.conf
+    HARDENING_CONF="/etc/sysctl.d/99-hardening.conf"
+
+    cat <<EOF > "$HARDENING_CONF"
+# Kernel hardening settings
+
+# Disable IP forwarding
 net.ipv4.ip_forward=0
-net.ipv4.conf.all.send_redirects=0
-net.ipv4.conf.default.send_redirects=0
-net.ipv4.tcp_syncookies=1
-net.ipv4.conf.all.rp_filter=1
-net.ipv4.conf.default.rp_filter=1
+
+# Disable source routing
 net.ipv4.conf.all.accept_source_route=0
 net.ipv4.conf.default.accept_source_route=0
+
+# Disable ICMP redirects
+net.ipv4.conf.all.send_redirects=0
+net.ipv4.conf.default.send_redirects=0
+
+# Enable SYN cookies
+net.ipv4.tcp_syncookies=1
+
+# Enable reverse path filtering
+net.ipv4.conf.all.rp_filter=1
+net.ipv4.conf.default.rp_filter=1
+
+# Randomize virtual address space
 kernel.randomize_va_space=2
+
+# Disable IPv6 if not needed
+net.ipv6.conf.all.disable_ipv6=1
+net.ipv6.conf.default.disable_ipv6=1
+
 EOF
+
     sysctl --system || error_exit "Failed to apply kernel hardening settings."
     log "Kernel hardening settings applied."
 }
