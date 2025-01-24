@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Description: Harden a Debian or Red Hat-based server by performing system
+#              updates, disabling unnecessary services, configuring firewalls,
+#              hardening SSH, setting secure permissions, enabling automatic
+#              updates, installing Fail2Ban, applying kernel hardening settings,
+#              and implementing additional security measures.
+
 # --------------------------- Configuration Variables ------------------------ #
 
 # Configurable SSH port
