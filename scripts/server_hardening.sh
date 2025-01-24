@@ -8,6 +8,9 @@
 
 # --------------------------- Configuration Variables ------------------------ #
 
+# Exit immediately if a command exits with a non-zero status
+set -e
+
 # Configurable SSH port
 SSH_PORT=2200
 
