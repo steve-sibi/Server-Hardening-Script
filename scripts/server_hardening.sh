@@ -1,10 +1,31 @@
 #!/bin/bash
 
-# Description: Harden a Debian or Red Hat-based server by performing system
-#              updates, disabling unnecessary services, configuring firewalls,
-#              hardening SSH, setting secure permissions, enabling automatic
-#              updates, installing Fail2Ban, applying kernel hardening settings,
-#              and implementing additional security measures.
+###############################################################################
+# Script Name: server_hardening.sh
+# Description: 
+#   This script hardens a Debian or Red Hat-based server by performing the 
+#   following tasks:
+#     - System updates
+#     - Disabling unnecessary and insecure services
+#     - Configuring and enabling firewalls (UFW or Firewalld)
+#     - Hardening SSH configuration
+#     - Setting secure permissions for critical files and directories
+#     - Enabling automatic security updates
+#     - Installing and configuring Fail2Ban for intrusion prevention
+#     - Applying kernel hardening settings
+#     - Managing user accounts and enforcing strong password policies
+#
+#   The script ensures that the server adheres to best security practices to 
+#   minimize vulnerabilities and protect against unauthorized access.
+#
+# Usage:
+#   sudo ./server_hardening.sh
+#
+# Requirements:
+#   - Root privileges
+#   - Supported package manager (apt, dnf, or yum)
+#   - Internet connectivity for package installations and updates
+###############################################################################
 
 # --------------------------- Configuration Variables ------------------------ #
 
