@@ -27,10 +27,10 @@
 #   - Internet connectivity for package installations and updates
 ###############################################################################
 
-# --------------------------- Configuration Variables ------------------------ #
-
 # Exit immediately if a command exits with a non-zero status
 set -e
+
+# --------------------------- Configuration Variables ------------------------ #
 
 # Configurable SSH port
 SSH_PORT=2200
