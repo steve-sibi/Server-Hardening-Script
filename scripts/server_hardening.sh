@@ -255,7 +255,8 @@ install_fail2ban() {
     log "Fail2Ban installed and running."
 }
 
-# Function to apply kernel hardening settings
+# Function: apply_kernel_hardening
+# Purpose: Applies kernel hardening settings to enhance system security.
 apply_kernel_hardening() {
     log "Applying kernel hardening settings..."
     HARDENING_CONF="/etc/sysctl.d/99-hardening.conf"
