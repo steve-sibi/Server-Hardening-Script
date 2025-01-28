@@ -294,7 +294,9 @@ EOF
     log "Kernel hardening settings applied."
 }
 
-# Function to manage user accounts and enforce password policies
+# Function: manage_users
+# Purpose: Manages user accounts by disabling unnecessary accounts and enforcing
+#          strong password policies.
 manage_users() {
     log "Managing user accounts and enforcing password policies..."
 
