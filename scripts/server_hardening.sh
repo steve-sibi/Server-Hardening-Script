@@ -325,7 +325,32 @@ manage_users() {
     log "User account management and password policies enforced."
 }
 
+# Function: display_usage
+# Purpose: Displays usage instructions for the script.
+display_usage() {
+    echo "Usage: sudo ./server_hardening.sh"
+    echo ""
+    echo "Description:"
+    echo "  This script hardens a Debian or Red Hat-based server by performing system"
+    echo "  updates, disabling unnecessary services, configuring firewalls, hardening"
+    echo "  SSH, setting secure permissions, enabling automatic updates, installing"
+    echo "  Fail2Ban, applying kernel hardening settings, and managing user accounts."
+    echo ""
+    echo "Requirements:"
+    echo "  - Must be run as root."
+    echo "  - Requires a supported package manager (apt, dnf, or yum)."
+    echo ""
+    echo "Example:"
+    echo "  sudo ./server_hardening.sh"
+}
+
 # --------------------------- Main Script Execution -------------------------- #
+
+# Display usage if script is called with -h or --help
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    display_usage
+    exit 0
+fi
 
 log "================= Starting Server Hardening Process ================="
 
