@@ -352,6 +352,7 @@ if [[ "$1" == "-h" || "$1" == "--help" ]]; then
     exit 0
 fi
 
+# Start of hardening process
 log "================= Starting Server Hardening Process ================="
 
 update_system
