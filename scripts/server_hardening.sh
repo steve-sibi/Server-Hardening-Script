@@ -50,6 +50,7 @@ fi
 
 # --------------------------- Function Definitions --------------------------- #
 
+# Start of hardening process
 # Ensure the script is being run as root
 if [ "$EUID" -ne 0 ]; then
     # If the effective user ID is not 0 (root), display an error message and exit
@@ -338,4 +339,7 @@ install_fail2ban
 apply_kernel_hardening
 manage_users
 
+# End of Hardening Process
 log "================= Server Hardening Process Complete! ================="
+
+exit 0
