@@ -75,7 +75,7 @@ if command -v apt > /dev/null 2>&1; then
     PM_INSTALL="apt install -y"
     PM_CONFIGURE_AUTO_UPDATES() {
         apt install unattended-upgrades -y || error_exit "Failed to install unattended-upgrades."
-        dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
+        DEBIAN_FRONTEND=noninteractive dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
     }
 elif command -v dnf > /dev/null 2>&1; then
     PM_UPDATE="dnf update -y"
