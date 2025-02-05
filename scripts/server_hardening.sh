@@ -228,14 +228,20 @@ set_secure_permissions() {
     fi
 
     # Secure permissions for critical system files
-    for file in /etc/passwd /etc/shadow; do
-        if [ "$(stat -c "%a" "$file")" -ne 600 ]; then
-            chmod 600 "$file" || error_exit "Failed to set permissions for $file."
-            log "Set $file permissions to 600."
-        else
-            log "$file permissions are already set to 600."
-        fi
-    done
+    # /etc/passwd is typically 644, while /etc/shadow should be 600
+    if [ "$(stat -c "%a" /etc/passwd)" -ne 644 ]; then
+        chmod 644 /etc/passwd || error_exit "Failed to set permissions for /etc/passwd."
+        log "Set /etc/passwd permissions to 644."
+    else
+        log "/etc/passwd permissions are already set to 644."
+    fi
+
+    if [ "$(stat -c "%a" /etc/shadow)" -ne 600 ]; then
+        chmod 600 /etc/shadow || error_exit "Failed to set permissions for /etc/shadow."
+        log "Set /etc/shadow permissions to 600."
+    else
+        log "/etc/shadow permissions are already set to 600."
+    fi
 
     log "File permissions set securely."
 }
