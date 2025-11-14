@@ -622,10 +622,10 @@ enforce_password_policy() {
         if command -v authselect > /dev/null 2>&1; then
             authselect apply-changes || true
         fi
-        sed -i --follow-symlinks -E 's|^password\s+(requisite|required)\s+pam_pwquality\.so.*|password	requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1|I' "$pam_file" ||
+        sed -i --follow-symlinks -E "s|^password\\s+(requisite|required)\\s+pam_pwquality\\.so.*|password\\trequisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1|I" "$pam_file" ||
             error_exit "Failed to update pam_pwquality configuration."
     else
-        printf "\npassword	requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1\n" >> "$pam_file" ||
+        printf "\\npassword\\trequisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1\\n" >> "$pam_file" ||
             error_exit "Failed to append pam_pwquality configuration."
     fi
 
