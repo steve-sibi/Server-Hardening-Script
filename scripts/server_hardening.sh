@@ -85,25 +85,25 @@ require_root() {
 }
 
 display_usage() {
-	cat <<'EOF'
+	cat << 'EOF'
 Usage: sudo ./server_hardening.sh [options]
 
 Options:
-  --ssh-port <port>          Set SSH port (default: 2200)
-  --allow-port <value>       Allow additional firewall port/service (e.g. 8080/tcp)
+  --ssh-port <port>		  Set SSH port (default: 2200)
+  --allow-port <value>	   Allow additional firewall port/service (e.g. 8080/tcp)
   --disable-service <name>   Add a service (without .service) to disable
-  --lock-user <username>     Add a user account to lock
-  --keep-ipv6                Do not disable IPv6 via sysctl
-  --skip-updates             Skip system package updates
-  --skip-services            Skip disabling unnecessary services
-  --skip-firewall            Skip firewall configuration
-  --skip-ssh                 Skip SSH hardening
-  --skip-permissions         Skip file permission adjustments
-  --skip-auto-updates        Skip automatic security update configuration
-  --skip-fail2ban            Skip Fail2Ban installation/configuration
-  --skip-kernel              Skip kernel hardening
-  --skip-users               Skip user/password policy enforcement
-  -h, --help                 Display this help message
+  --lock-user <username>	 Add a user account to lock
+  --keep-ipv6				Do not disable IPv6 via sysctl
+  --skip-updates			 Skip system package updates
+  --skip-services			Skip disabling unnecessary services
+  --skip-firewall			Skip firewall configuration
+  --skip-ssh				 Skip SSH hardening
+  --skip-permissions		 Skip file permission adjustments
+  --skip-auto-updates		Skip automatic security update configuration
+  --skip-fail2ban			Skip Fail2Ban installation/configuration
+  --skip-kernel			  Skip kernel hardening
+  --skip-users			   Skip user/password policy enforcement
+  -h, --help				 Display this help message
 EOF
 }
 
@@ -303,7 +303,7 @@ determine_firewall_tool() {
 			install_packages ufw
 			FIREWALL_TOOL="ufw"
 			;;
-		dnf|yum)
+		dnf | yum)
 			log "Installing Firewalld for firewall management..."
 			install_packages firewalld
 			FIREWALL_TOOL="firewalld"
@@ -333,7 +333,7 @@ configure_firewall() {
 
 configure_ufw() {
 	local ufw_state="active"
-	if ufw status 2>/dev/null | grep -qi "inactive"; then
+	if ufw status 2> /dev/null | grep -qi "inactive"; then
 		ufw_state="inactive"
 	fi
 
@@ -341,7 +341,7 @@ configure_ufw() {
 	ufw default allow outgoing || error_exit "Failed to set UFW default outgoing policy."
 
 	for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
-		if ufw allow "$port" >/dev/null; then
+		if ufw allow "$port" > /dev/null; then
 			log "Ensured UFW allows $port."
 		else
 			error_exit "Failed to allow $port via UFW."
@@ -366,14 +366,14 @@ configure_firewalld() {
 			if [[ "$port" != */* ]]; then
 				rule="${port}/tcp"
 			fi
-			if ! firewall-cmd --permanent --query-port="$rule" >/dev/null 2>&1; then
+			if ! firewall-cmd --permanent --query-port="$rule" > /dev/null 2>&1; then
 				firewall-cmd --permanent --add-port="$rule" || error_exit "Failed to add port $rule to Firewalld."
 				log "Added Firewalld port rule $rule."
 			else
 				log "Port rule $rule already present in Firewalld."
 			fi
 		else
-			if ! firewall-cmd --permanent --query-service="$port" >/dev/null 2>&1; then
+			if ! firewall-cmd --permanent --query-service="$port" > /dev/null 2>&1; then
 				firewall-cmd --permanent --add-service="$port" || error_exit "Failed to add service $port to Firewalld."
 				log "Added Firewalld service $port."
 			else
@@ -401,7 +401,7 @@ set_sshd_option() {
 
 restart_ssh_service() {
 	local ssh_service="sshd"
-	if systemctl status ssh >/dev/null 2>&1; then
+	if systemctl status ssh > /dev/null 2>&1; then
 		ssh_service="ssh"
 	fi
 	systemctl restart "$ssh_service" || error_exit "Failed to restart $ssh_service service."
@@ -465,10 +465,10 @@ enable_auto_updates() {
 	log "Enabling automatic security updates..."
 	case "$PKG_MANAGER" in
 		apt)
-			if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
+			if ! dpkg -s unattended-upgrades > /dev/null 2>&1; then
 				install_packages unattended-upgrades
 			fi
-			dpkg-reconfigure --priority=low unattended-upgrades >/dev/null 2>&1 || error_exit "Failed to configure unattended-upgrades."
+			dpkg-reconfigure --priority=low unattended-upgrades > /dev/null 2>&1 || error_exit "Failed to configure unattended-upgrades."
 			;;
 		dnf)
 			if ! systemctl list-unit-files | awk '{print $1}' | grep -Fxq "dnf-automatic.timer"; then
@@ -477,7 +477,7 @@ enable_auto_updates() {
 			systemctl enable --now dnf-automatic.timer || error_exit "Failed to enable dnf-automatic.timer."
 			;;
 		yum)
-			if ! rpm -q yum-cron >/dev/null 2>&1; then
+			if ! rpm -q yum-cron > /dev/null 2>&1; then
 				install_packages yum-cron
 			fi
 			systemctl enable yum-cron || error_exit "Failed to enable yum-cron."
@@ -492,7 +492,7 @@ enable_auto_updates() {
 
 install_fail2ban() {
 	log "Installing and configuring Fail2Ban..."
-	if ! command -v fail2ban-client >/dev/null 2>&1; then
+	if ! command -v fail2ban-client > /dev/null 2>&1; then
 		install_packages fail2ban
 	fi
 	systemctl enable fail2ban || error_exit "Failed to enable Fail2Ban."
@@ -520,7 +520,7 @@ apply_kernel_hardening() {
 		fi
 	} > "$hardening_conf" || error_exit "Failed to write $hardening_conf."
 
-	sysctl -p "$hardening_conf" >/dev/null || error_exit "Failed to apply kernel hardening settings."
+	sysctl -p "$hardening_conf" > /dev/null || error_exit "Failed to apply kernel hardening settings."
 	log "Kernel hardening settings applied."
 }
 
@@ -531,7 +531,7 @@ disable_unnecessary_accounts() {
 	fi
 
 	for user in "${UNNECESSARY_USERS[@]}"; do
-		if id "$user" >/dev/null 2>&1; then
+		if id "$user" > /dev/null 2>&1; then
 			local status
 			status="$(passwd -S "$user" | awk '{print $2}')"
 			if [[ "$status" == "L" || "$status" == "LK" ]]; then
@@ -557,9 +557,9 @@ update_login_defs_setting() {
 	fi
 
 	if grep -q "^${key}" "$file"; then
-		sed -i -E "s|^${key}.*|${key}    ${value}|" "$file" || error_exit "Failed to update $key in $file."
+		sed -i -E "s|^${key}.*|${key}	${value}|" "$file" || error_exit "Failed to update $key in $file."
 	else
-		printf "%s    %s\n" "$key" "$value" >> "$file" || error_exit "Failed to append $key to $file."
+		printf "%s	%s\n" "$key" "$value" >> "$file" || error_exit "Failed to append $key to $file."
 	fi
 }
 
@@ -580,16 +580,16 @@ enforce_password_policy() {
 	fi
 
 	if grep -qi "pam_pwquality.so" "$pam_file"; then
-		sed -i -E 's|^password\s+(requisite|required)\s+pam_pwquality\.so.*|password    requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1|I' "$pam_file" || \
+		sed -i -E 's|^password\s+(requisite|required)\s+pam_pwquality\.so.*|password	requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1|I' "$pam_file" ||
 			error_exit "Failed to update pam_pwquality configuration."
 	else
-		printf "\npassword    requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1\n" >> "$pam_file" || \
+		printf "\npassword	requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1\n" >> "$pam_file" ||
 			error_exit "Failed to append pam_pwquality configuration."
 	fi
 
 	local pwquality_dir="/etc/security/pwquality.conf.d"
 	mkdir -p "$pwquality_dir"
-	cat <<'EOF' > "${pwquality_dir}/99-server-hardening.conf"
+	cat << 'EOF' > "${pwquality_dir}/99-server-hardening.conf"
 # Managed by server_hardening.sh
 minlen = 12
 dcredit = -1
