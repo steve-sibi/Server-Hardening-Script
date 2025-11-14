@@ -494,7 +494,26 @@ enable_auto_updates() {
 install_fail2ban() {
     log "Installing and configuring Fail2Ban..."
     if ! command -v fail2ban-client > /dev/null 2>&1; then
-        install_packages fail2ban
+        case "$PKG_MANAGER" in
+            apt)
+                install_packages fail2ban
+                ;;
+            dnf)
+                if ! rpm -q epel-release > /dev/null 2>&1; then
+                    dnf install -y epel-release || error_exit "Failed to install epel-release."
+                fi
+                dnf install -y fail2ban || error_exit "Failed to install Fail2Ban."
+                ;;
+            yum)
+                if ! rpm -q epel-release > /dev/null 2>&1; then
+                    yum install -y epel-release || error_exit "Failed to install epel-release."
+                fi
+                yum install -y fail2ban || error_exit "Failed to install Fail2Ban."
+                ;;
+            *)
+                error_exit "Unsupported package manager. Cannot install Fail2Ban."
+                ;;
+        esac
     fi
     systemctl enable fail2ban || error_exit "Failed to enable Fail2Ban."
     systemctl restart fail2ban || error_exit "Failed to start Fail2Ban."
