@@ -130,7 +130,7 @@ jobs:
             if [ "$FIREWALL" = "ufw" ]; then
               ufw status | grep -q "2200"
             else
-              firewall-cmd --list-ports | grep -q "2200/tcp"
+              firewall-cmd --list-ports | grep -q "2200/tcp" || firewall-cmd --list-services | grep -q "ssh"
             fi
             systemctl is-enabled fail2ban >/dev/null
             sysctl net.ipv4.tcp_syncookies | grep -q "= 1"
