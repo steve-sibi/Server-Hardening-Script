@@ -38,6 +38,27 @@ PKG_MANAGER=""
 FIREWALL_TOOL=""
 APT_UPDATED=false
 
+ensure_python3() {
+    if command -v python3 > /dev/null 2>&1; then
+        return
+    fi
+
+    case "$PKG_MANAGER" in
+        apt)
+            install_packages python3
+            ;;
+        dnf)
+            install_packages python3
+            ;;
+        yum)
+            install_packages python3
+            ;;
+        *)
+            error_exit "python3 is required but could not be installed."
+            ;;
+    esac
+}
+
 SKIP_UPDATES=false
 SKIP_SERVICES=false
 SKIP_FIREWALL=false
@@ -618,16 +639,26 @@ enforce_password_policy() {
         return
     fi
 
-    if grep -qi "pam_pwquality.so" "$pam_file"; then
-        if command -v authselect > /dev/null 2>&1; then
-            authselect apply-changes || true
-        fi
-        sed -i --follow-symlinks -E "s|^password\\s+(requisite|required)\\s+pam_pwquality\\.so.*|password\\trequisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1|I" "$pam_file" ||
-            error_exit "Failed to update pam_pwquality configuration."
-    else
-        printf "\\npassword\\trequisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1\\n" >> "$pam_file" ||
-            error_exit "Failed to append pam_pwquality configuration."
+    if command -v authselect > /dev/null 2>&1; then
+        authselect apply-changes || true
     fi
+
+    local desired_line="password	requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1"
+    ensure_python3
+    python3 - "$pam_file" "$desired_line" << 'PY' || error_exit "Failed to update pam_pwquality configuration."
+import pathlib, re, sys
+pam_path = pathlib.Path(sys.argv[1])
+desired = sys.argv[2]
+text = pam_path.read_text()
+pattern = re.compile(r'^password\s+(?:requisite|required)\s+pam_pwquality\.so.*$', re.IGNORECASE | re.MULTILINE)
+if pattern.search(text):
+	text = pattern.sub(desired, text, count=1)
+else:
+	if not text.endswith('\n'):
+		text += '\n'
+	text += desired + '\n'
+pam_path.write_text(text)
+PY
 
     local pwquality_dir="/etc/security/pwquality.conf.d"
     mkdir -p "$pwquality_dir"
