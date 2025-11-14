@@ -125,14 +125,30 @@ jobs:
           container="${{ matrix.name }}"
           docker exec -e FIREWALL="$FIREWALL" -e SSH_SERVICE="$SSH_SERVICE" "$container" bash -lc '
             set -euo pipefail
+            echo "=== SSH Configuration ==="
             grep -q "^Port 2200" /etc/ssh/sshd_config
-            systemctl status "$SSH_SERVICE" >/dev/null
+            systemctl status "$SSH_SERVICE" --no-pager
+
+            echo "=== Firewall Status (${FIREWALL}) ==="
             if [ "$FIREWALL" = "ufw" ]; then
+              ufw status verbose
               ufw status | grep -q "2200"
             else
-              firewall-cmd --list-ports | grep -q "2200/tcp" || firewall-cmd --list-services | grep -q "ssh"
+              zone=$(firewall-cmd --get-default-zone)
+              echo "Firewalld default zone: $zone"
+              firewall-cmd --zone="$zone" --list-all
+              firewall-cmd --zone="$zone" --list-ports | grep -q "2200/tcp" || firewall-cmd --zone="$zone" --list-services | grep -q "\<ssh\>"
             fi
+
+            echo "=== Fail2Ban ==="
+            systemctl status fail2ban --no-pager
             systemctl is-enabled fail2ban >/dev/null
+
+            echo "=== Kernel Parameters ==="
+            sysctl net.ipv4.tcp_syncookies
+            sysctl net.ipv4.conf.all.accept_source_route
+            sysctl net.ipv4.ip_forward
+            sysctl net.ipv6.conf.all.disable_ipv6
             sysctl net.ipv4.tcp_syncookies | grep -q "= 1"
           '
 
