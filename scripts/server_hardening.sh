@@ -381,9 +381,13 @@ configure_ufw() {
 configure_firewalld() {
     systemctl enable --now firewalld || error_exit "Failed to enable Firewalld."
 
-    local target_zone="drop"
-    firewall-cmd --set-default-zone="$target_zone" > /dev/null 2>&1 || error_exit "Failed to set Firewalld runtime default zone."
-    firewall-cmd --permanent --set-default-zone="$target_zone" > /dev/null 2>&1 || error_exit "Failed to set Firewalld permanent default zone."
+    local target_zone
+    target_zone="$(firewall-cmd --get-default-zone 2> /dev/null || echo public)"
+
+    if [ "$target_zone" != "drop" ]; then
+        firewall-cmd --set-default-zone=drop > /dev/null 2>&1 || error_exit "Failed to set Firewalld runtime default zone."
+        target_zone="drop"
+    fi
 
     for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
         if [[ "$port" =~ ^[0-9]+(/[a-z]+)?$ ]]; then
@@ -407,6 +411,7 @@ configure_firewalld() {
         fi
     done
 
+    firewall-cmd --runtime-to-permanent > /dev/null 2>&1 || error_exit "Failed to persist Firewalld configuration."
     firewall-cmd --reload || error_exit "Failed to reload Firewalld."
     log "Firewalld configured."
 }
