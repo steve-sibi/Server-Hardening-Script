@@ -383,7 +383,7 @@ configure_firewalld() {
     done
 
     firewall-cmd --set-default-zone=drop > /dev/null 2>&1 || error_exit "Failed to set Firewalld runtime default zone."
-    firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set Firewalld default zone."
+    firewall-cmd --runtime-to-permanent > /dev/null 2>&1 || error_exit "Failed to persist Firewalld configuration."
     firewall-cmd --reload || error_exit "Failed to reload Firewalld."
     log "Firewalld configured."
 }
