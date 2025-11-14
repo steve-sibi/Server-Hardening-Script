@@ -524,6 +524,24 @@ apply_kernel_hardening() {
     log "Applying kernel hardening settings..."
     local hardening_conf="/etc/sysctl.d/99-server-hardening.conf"
     mkdir -p "$(dirname "$hardening_conf")" || error_exit "Failed to create $(dirname "$hardening_conf")."
+
+    if ! command -v sysctl > /dev/null 2>&1; then
+        case "$PKG_MANAGER" in
+            apt)
+                install_packages procps
+                ;;
+            dnf)
+                install_packages procps-ng
+                ;;
+            yum)
+                install_packages procps-ng
+                ;;
+            *)
+                error_exit "sysctl command not available and package manager is unsupported."
+                ;;
+        esac
+    fi
+
     {
         echo "# Managed by server_hardening.sh on $(date +'%Y-%m-%d %H:%M:%S')"
         echo "net.ipv4.ip_forward=0"
