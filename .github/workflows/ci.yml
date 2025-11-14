@@ -33,14 +33,30 @@ jobs:
         include:
           - name: ubuntu-22-04
             image: ubuntu:22.04
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
             firewall: ufw
             ssh_service: ssh
           - name: debian-12
             image: debian:12
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
             firewall: ufw
             ssh_service: ssh
           - name: rocky-9
             image: quay.io/rockylinux/rockylinux:9
+            init_cmd: |
+              set -e
+              dnf install -y systemd
+              exec /usr/lib/systemd/systemd
             firewall: firewalld
             ssh_service: sshd
     steps:
@@ -48,13 +64,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Launch systemd container
+        env:
+          INIT_CMD: ${{ matrix.init_cmd }}
         run: |
           container="${{ matrix.name }}"
           docker run --name "$container" \
             --privileged --cgroupns host \
             --tmpfs /tmp --tmpfs /run --tmpfs /run/lock \
-            -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
-            -d "${{ matrix.image }}" /sbin/init
+            -e container=docker \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -d "${{ matrix.image }}" bash -lc "$INIT_CMD"
+
+      - name: Wait for systemd to initialize
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            until systemctl list-units >/dev/null 2>&1; do
+              sleep 2
+            done
+          '
 
       - name: Bootstrap prerequisites
         run: |
