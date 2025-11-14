@@ -341,7 +341,11 @@ configure_ufw() {
     ufw default allow outgoing || error_exit "Failed to set UFW default outgoing policy."
 
     for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
-        ufw allow "$port" >/dev/null && log "Ensured UFW allows $port." || error_exit "Failed to allow $port via UFW."
+        if ufw allow "$port" >/dev/null; then
+            log "Ensured UFW allows $port."
+        else
+            error_exit "Failed to allow $port via UFW."
+        fi
     done
 
     if [ "$ufw_state" = "inactive" ]; then
