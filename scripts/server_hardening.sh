@@ -523,6 +523,7 @@ install_fail2ban() {
 apply_kernel_hardening() {
     log "Applying kernel hardening settings..."
     local hardening_conf="/etc/sysctl.d/99-server-hardening.conf"
+    mkdir -p "$(dirname "$hardening_conf")" || error_exit "Failed to create $(dirname "$hardening_conf")."
     {
         echo "# Managed by server_hardening.sh on $(date +'%Y-%m-%d %H:%M:%S')"
         echo "net.ipv4.ip_forward=0"
