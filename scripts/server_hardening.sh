@@ -2,24 +2,15 @@
 
 ###############################################################################
 # Script Name: server_hardening.sh
-# Description: 
-#   This script hardens a Debian or Red Hat-based server by performing the 
-#   following tasks:
-#     - System updates
-#     - Disabling unnecessary and insecure services
-#     - Configuring and enabling firewalls (UFW or Firewalld)
-#     - Hardening SSH configuration
-#     - Setting secure permissions for critical files and directories
-#     - Enabling automatic security updates
-#     - Installing and configuring Fail2Ban for intrusion prevention
-#     - Applying kernel hardening settings
-#     - Managing user accounts and enforcing strong password policies
-#
-#   The script ensures that the server adheres to best security practices to 
-#   minimize vulnerabilities and protect against unauthorized access.
+# Description:
+#   Harden Debian- or Red Hat-based servers by applying secure defaults for
+#   updates, services, firewall rules, SSH, file permissions, automatic updates,
+#   Fail2Ban, kernel parameters, and user-account policies.
+#   Options make each step optional and configurable so the script can be safely
+#   re-run without undoing prior customisations.
 #
 # Usage:
-#   sudo ./server_hardening.sh
+#   sudo ./server_hardening.sh [options]
 #
 # Requirements:
 #   - Root privileges
@@ -27,351 +18,663 @@
 #   - Internet connectivity for package installations and updates
 ###############################################################################
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -euo pipefail
 
-# --------------------------- Configuration Variables ------------------------ #
+SSH_PORT_DEFAULT=2200
+SSH_PORT="$SSH_PORT_DEFAULT"
+DISABLE_IPV6=true
 
-# Configurable SSH port
-SSH_PORT=2200
+declare -a FIREWALL_ALLOWED_PORTS=("ssh" "http" "https")
+declare -a SERVICES_TO_DISABLE=("telnet" "ftp" "rsync" "nfs" "smb")
+declare -a UNNECESSARY_USERS=("games" "ftp" "mail")
+declare -a ADDITIONAL_FIREWALL_PORTS=()
+declare -a CUSTOM_SERVICES_TO_DISABLE=()
+declare -a ADDITIONAL_USERS_TO_LOCK=()
 
-# Services to disable (add or remove services as needed)
-SERVICES_TO_DISABLE=("telnet" "ftp" "rsync" "nfs" "smb")
-
-# Error log file
+LOG_FILE="/var/log/server_hardening.log"
 ERROR_LOG="/var/log/server_hardening_error.log"
 
-# Firewall allowed ports (add or remove ports as needed)
-FIREWALL_ALLOWED_PORTS=("ssh" "http" "https")
-# Include custom SSH port if different from default
-if [ "$SSH_PORT" -ne 22 ]; then
-    FIREWALL_ALLOWED_PORTS+=("$SSH_PORT/tcp")
-fi
+PKG_MANAGER=""
+FIREWALL_TOOL=""
+APT_UPDATED=false
 
-# --------------------------- Function Definitions --------------------------- #
+SKIP_UPDATES=false
+SKIP_SERVICES=false
+SKIP_FIREWALL=false
+SKIP_SSH=false
+SKIP_PERMISSIONS=false
+SKIP_AUTO_UPDATES=false
+SKIP_FAIL2BAN=false
+SKIP_KERNEL=false
+SKIP_USERS=false
 
-# Start of hardening process
-# Ensure the script is being run as root
-if [ "$EUID" -ne 0 ]; then
-    # If the effective user ID is not 0 (root), display an error message and exit
-    echo "[ERROR] Please run this script as root." | tee -a "$ERROR_LOG" >&2
-    exit 1
-fi
-
-# Log function to standardize informational messages with timestamps
 log() {
-    echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $1"
+    local message
+    message="$(date +'%Y-%m-%d %H:%M:%S') [INFO] $*"
+    echo "$message" | tee -a "$LOG_FILE"
 }
 
-# Function to log error messages and exit the script with a failure status
 error_exit() {
-    echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1" | tee -a "$ERROR_LOG" >&2
+    trap - ERR
+    local message
+    message="$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $*"
+    echo "$message" | tee -a "$LOG_FILE" >&2
+    echo "$message" >> "$ERROR_LOG"
     exit 1
 }
 
-# Abstract package manager commands
-if command -v apt > /dev/null 2>&1; then
-    PM_UPDATE="apt update && apt upgrade -y"
-    PM_INSTALL="apt install -y"
-    PM_CONFIGURE_AUTO_UPDATES() {
-        apt install unattended-upgrades -y || error_exit "Failed to install unattended-upgrades."
-        DEBIAN_FRONTEND=noninteractive dpkg-reconfigure --priority=low unattended-upgrades || error_exit "Failed to configure unattended-upgrades."
-    }
-elif command -v dnf > /dev/null 2>&1; then
-    PM_UPDATE="dnf update -y"
-    PM_INSTALL="dnf install -y"
-    PM_CONFIGURE_AUTO_UPDATES() {
-        dnf install dnf-automatic -y || error_exit "Failed to install dnf-automatic."
-        systemctl enable --now dnf-automatic.timer || error_exit "Failed to enable dnf-automatic.timer."
-    }
-elif command -v yum > /dev/null 2>&1; then
-    PM_UPDATE="yum update -y"
-    PM_INSTALL="yum install -y"
-    PM_CONFIGURE_AUTO_UPDATES() {
-        yum install yum-cron -y || error_exit "Failed to install yum-cron."
-        systemctl enable yum-cron || error_exit "Failed to enable yum-cron."
-        systemctl start yum-cron || error_exit "Failed to start yum-cron."
-    }
-else
-    error_exit "No supported package manager found. Exiting."
-fi
+handle_unexpected_error() {
+    local exit_code=$?
+    local line=${BASH_LINENO[0]:-0}
+    error_exit "Unexpected error (exit code ${exit_code}) occurred on or near line ${line}. Review $ERROR_LOG for details."
+}
 
-# Function to update the system's package repositories and installed packages
+trap 'handle_unexpected_error' ERR
+
+init_logging() {
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE" "$ERROR_LOG"
+    chmod 600 "$LOG_FILE" "$ERROR_LOG"
+}
+
+require_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "[ERROR] Please run this script as root." >&2
+        exit 1
+    fi
+}
+
+display_usage() {
+    cat <<'EOF'
+Usage: sudo ./server_hardening.sh [options]
+
+Options:
+  --ssh-port <port>          Set SSH port (default: 2200)
+  --allow-port <value>       Allow additional firewall port/service (e.g. 8080/tcp)
+  --disable-service <name>   Add a service (without .service) to disable
+  --lock-user <username>     Add a user account to lock
+  --keep-ipv6                Do not disable IPv6 via sysctl
+  --skip-updates             Skip system package updates
+  --skip-services            Skip disabling unnecessary services
+  --skip-firewall            Skip firewall configuration
+  --skip-ssh                 Skip SSH hardening
+  --skip-permissions         Skip file permission adjustments
+  --skip-auto-updates        Skip automatic security update configuration
+  --skip-fail2ban            Skip Fail2Ban installation/configuration
+  --skip-kernel              Skip kernel hardening
+  --skip-users               Skip user/password policy enforcement
+  -h, --help                 Display this help message
+EOF
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --ssh-port)
+                local port="${2:-}"
+                if [[ -z "$port" ]]; then
+                    error_exit "Missing value for --ssh-port."
+                fi
+                if ! [[ "$port" =~ ^[0-9]+$ ]] || ((port < 1 || port > 65535)); then
+                    error_exit "SSH port must be an integer between 1 and 65535."
+                fi
+                SSH_PORT="$port"
+                shift
+                ;;
+            --allow-port)
+                local fw_value="${2:-}"
+                if [[ -z "$fw_value" ]]; then
+                    error_exit "Missing value for --allow-port."
+                fi
+                ADDITIONAL_FIREWALL_PORTS+=("$fw_value")
+                shift
+                ;;
+            --disable-service)
+                local svc="${2:-}"
+                if [[ -z "$svc" ]]; then
+                    error_exit "Missing value for --disable-service."
+                fi
+                CUSTOM_SERVICES_TO_DISABLE+=("$svc")
+                shift
+                ;;
+            --lock-user)
+                local user="${2:-}"
+                if [[ -z "$user" ]]; then
+                    error_exit "Missing value for --lock-user."
+                fi
+                ADDITIONAL_USERS_TO_LOCK+=("$user")
+                shift
+                ;;
+            --keep-ipv6)
+                DISABLE_IPV6=false
+                ;;
+            --skip-updates)
+                SKIP_UPDATES=true
+                ;;
+            --skip-services)
+                SKIP_SERVICES=true
+                ;;
+            --skip-firewall)
+                SKIP_FIREWALL=true
+                ;;
+            --skip-ssh)
+                SKIP_SSH=true
+                ;;
+            --skip-permissions)
+                SKIP_PERMISSIONS=true
+                ;;
+            --skip-auto-updates)
+                SKIP_AUTO_UPDATES=true
+                ;;
+            --skip-fail2ban)
+                SKIP_FAIL2BAN=true
+                ;;
+            --skip-kernel)
+                SKIP_KERNEL=true
+                ;;
+            --skip-users)
+                SKIP_USERS=true
+                ;;
+            *)
+                error_exit "Unknown option: $1"
+                ;;
+        esac
+        shift
+    done
+}
+
+finalize_configuration() {
+    if [ "${#CUSTOM_SERVICES_TO_DISABLE[@]}" -gt 0 ]; then
+        SERVICES_TO_DISABLE+=("${CUSTOM_SERVICES_TO_DISABLE[@]}")
+    fi
+    if [ "${#ADDITIONAL_USERS_TO_LOCK[@]}" -gt 0 ]; then
+        UNNECESSARY_USERS+=("${ADDITIONAL_USERS_TO_LOCK[@]}")
+    fi
+    if [ "${#ADDITIONAL_FIREWALL_PORTS[@]}" -gt 0 ]; then
+        FIREWALL_ALLOWED_PORTS+=("${ADDITIONAL_FIREWALL_PORTS[@]}")
+    fi
+    if [ "$SSH_PORT" -ne 22 ]; then
+        FIREWALL_ALLOWED_PORTS+=("$SSH_PORT/tcp")
+    fi
+}
+
+detect_package_manager() {
+    if command -v apt-get > /dev/null 2>&1; then
+        PKG_MANAGER="apt"
+        export DEBIAN_FRONTEND=noninteractive
+    elif command -v dnf > /dev/null 2>&1; then
+        PKG_MANAGER="dnf"
+    elif command -v yum > /dev/null 2>&1; then
+        PKG_MANAGER="yum"
+    else
+        error_exit "No supported package manager found. Exiting."
+    fi
+}
+
+install_packages() {
+    local packages=("$@")
+    case "$PKG_MANAGER" in
+        apt)
+            if [ "$APT_UPDATED" = false ]; then
+                apt-get update || error_exit "apt-get update failed."
+                APT_UPDATED=true
+            fi
+            apt-get install -y "${packages[@]}" || error_exit "Failed to install packages: ${packages[*]}"
+            ;;
+        dnf)
+            dnf install -y "${packages[@]}" || error_exit "Failed to install packages: ${packages[*]}"
+            ;;
+        yum)
+            yum install -y "${packages[@]}" || error_exit "Failed to install packages: ${packages[*]}"
+            ;;
+        *)
+            error_exit "Package manager not initialised."
+            ;;
+    esac
+}
+
 update_system() {
     log "Updating system packages..."
-    eval "$PM_UPDATE" || error_exit "Failed to update system packages."
+    case "$PKG_MANAGER" in
+        apt)
+            apt-get update || error_exit "apt-get update failed."
+            apt-get upgrade -y || error_exit "apt-get upgrade failed."
+            APT_UPDATED=true
+            ;;
+        dnf)
+            dnf upgrade -y || error_exit "dnf upgrade failed."
+            ;;
+        yum)
+            yum update -y || error_exit "yum update failed."
+            ;;
+        *)
+            error_exit "Package manager not initialised."
+            ;;
+    esac
+    log "System packages updated."
 }
 
-# Function to disable unnecessary and potentially insecure services
 disable_services() {
+    if [ "${#SERVICES_TO_DISABLE[@]}" -eq 0 ]; then
+        log "No services configured for disabling."
+        return
+    fi
+
     log "Disabling unused services..."
     for service in "${SERVICES_TO_DISABLE[@]}"; do
-        if systemctl is-active --quiet "$service.service"; then
-            log "Stopping and disabling $service..."
-            systemctl stop "$service.service" && systemctl disable "$service.service" || \
-                error_exit "Failed to disable $service."
+        local unit="$service"
+        [[ "$unit" != *.service ]] && unit="${unit}.service"
+
+        if ! systemctl list-unit-files | awk '{print $1}' | grep -Fxq "$unit"; then
+            log "Service $unit not found. Skipping."
+            continue
+        fi
+
+        if systemctl is-active --quiet "$unit"; then
+            log "Stopping $unit..."
+            systemctl stop "$unit" || error_exit "Failed to stop $unit."
         else
-            log "$service is already stopped and disabled."
+            log "$unit is not active."
+        fi
+
+        if systemctl is-enabled --quiet "$unit"; then
+            log "Disabling $unit..."
+            systemctl disable --now "$unit" || error_exit "Failed to disable $unit."
+        else
+            log "$unit is already disabled or static."
         fi
     done
 }
 
-# Function to configure and enable a firewall
+determine_firewall_tool() {
+    if command -v ufw > /dev/null 2>&1; then
+        FIREWALL_TOOL="ufw"
+        return
+    fi
+
+    if command -v firewall-cmd > /dev/null 2>&1; then
+        FIREWALL_TOOL="firewalld"
+        return
+    fi
+
+    case "$PKG_MANAGER" in
+        apt)
+            log "Installing UFW for firewall management..."
+            install_packages ufw
+            FIREWALL_TOOL="ufw"
+            ;;
+        dnf|yum)
+            log "Installing Firewalld for firewall management..."
+            install_packages firewalld
+            FIREWALL_TOOL="firewalld"
+            ;;
+        *)
+            error_exit "Unable to determine firewall tool."
+            ;;
+    esac
+}
+
 configure_firewall() {
     log "Configuring firewall..."
-    if command -v ufw > /dev/null 2>&1; then
-        log "Using UFW for firewall management."
-        if ufw status | grep -q inactive; then
-            log "Setting default UFW policies..."
-            ufw default deny incoming
-            ufw default allow outgoing
-            for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
-                ufw allow "$port" || error_exit "Failed to allow port $port in UFW."
-            done
-            ufw --force enable || error_exit "Failed to enable UFW."
-        else
-            log "UFW is already active. Ensuring allowed ports are configured..."
-            for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
-                if ! ufw status | grep -qw "$port"; then
-                    ufw allow "$port" || error_exit "Failed to allow port $port in UFW."
-                fi
-            done
-            log "UFW is active and allowed ports are configured."
-        fi
-    elif command -v firewall-cmd > /dev/null 2>&1; then
-        log "Using Firewalld for firewall management."
-        if ! systemctl is-active --quiet firewalld; then
-            systemctl enable firewalld || error_exit "Failed to enable Firewalld."
-            systemctl start firewalld || error_exit "Failed to start Firewalld."
-        fi
-        for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
-            if [[ "$port" == *"/tcp" ]]; then
-                PORT_NUM=$(echo "$port" | cut -d'/' -f1)
-                firewall-cmd --permanent --add-port="$PORT_NUM/tcp" || error_exit "Failed to add port $PORT_NUM/tcp to Firewalld."
-            else
-                firewall-cmd --permanent --add-service="$port" || error_exit "Failed to add service $port to Firewalld."
-            fi
-        done
-        firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set default zone in Firewalld."
-        firewall-cmd --reload || error_exit "Failed to reload Firewalld."
+    determine_firewall_tool
+
+    case "$FIREWALL_TOOL" in
+        ufw)
+            configure_ufw
+            ;;
+        firewalld)
+            configure_firewalld
+            ;;
+        *)
+            error_exit "Firewall tool not available."
+            ;;
+    esac
+}
+
+configure_ufw() {
+    local ufw_state="active"
+    if ufw status 2>/dev/null | grep -qi "inactive"; then
+        ufw_state="inactive"
+    fi
+
+    ufw default deny incoming || error_exit "Failed to set UFW default incoming policy."
+    ufw default allow outgoing || error_exit "Failed to set UFW default outgoing policy."
+
+    for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
+        ufw allow "$port" >/dev/null && log "Ensured UFW allows $port." || error_exit "Failed to allow $port via UFW."
+    done
+
+    if [ "$ufw_state" = "inactive" ]; then
+        ufw --force enable || error_exit "Failed to enable UFW."
     else
-        error_exit "No supported firewall tool found. Exiting."
+        ufw reload || error_exit "Failed to reload UFW."
+    fi
+
+    log "UFW configured."
+}
+
+configure_firewalld() {
+    systemctl enable --now firewalld || error_exit "Failed to enable Firewalld."
+
+    for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
+        if [[ "$port" =~ ^[0-9]+(/[a-z]+)?$ ]]; then
+            local rule="$port"
+            if [[ "$port" != */* ]]; then
+                rule="${port}/tcp"
+            fi
+            if ! firewall-cmd --permanent --query-port="$rule" >/dev/null 2>&1; then
+                firewall-cmd --permanent --add-port="$rule" || error_exit "Failed to add port $rule to Firewalld."
+                log "Added Firewalld port rule $rule."
+            else
+                log "Port rule $rule already present in Firewalld."
+            fi
+        else
+            if ! firewall-cmd --permanent --query-service="$port" >/dev/null 2>&1; then
+                firewall-cmd --permanent --add-service="$port" || error_exit "Failed to add service $port to Firewalld."
+                log "Added Firewalld service $port."
+            else
+                log "Service $port already allowed in Firewalld."
+            fi
+        fi
+    done
+
+    firewall-cmd --permanent --set-default-zone=drop || error_exit "Failed to set Firewalld default zone."
+    firewall-cmd --reload || error_exit "Failed to reload Firewalld."
+    log "Firewalld configured."
+}
+
+set_sshd_option() {
+    local key="$1"
+    local value="$2"
+    local ssh_config="/etc/ssh/sshd_config"
+
+    if grep -qi "^[[:space:]#]*${key}[[:space:]]" "$ssh_config"; then
+        sed -i -E "s|^[[:space:]#]*${key}[[:space:]].*|${key} ${value}|I" "$ssh_config" || error_exit "Failed to update ${key} in $ssh_config."
+    else
+        printf "\n%s %s\n" "$key" "$value" >> "$ssh_config" || error_exit "Failed to append ${key} to $ssh_config."
     fi
 }
 
-# Function to harden the SSH configuration
+restart_ssh_service() {
+    local ssh_service="sshd"
+    if systemctl status ssh >/dev/null 2>&1; then
+        ssh_service="ssh"
+    fi
+    systemctl restart "$ssh_service" || error_exit "Failed to restart $ssh_service service."
+    log "Restarted $ssh_service service."
+}
+
 harden_ssh() {
     log "Hardening SSH configuration..."
-    SSH_CONFIG="/etc/ssh/sshd_config"
-    SSH_BACKUP="/etc/ssh/sshd_config.bak"
+    local ssh_config="/etc/ssh/sshd_config"
+    local ssh_backup="/etc/ssh/sshd_config.bak"
 
-    if [ ! -f "$SSH_BACKUP" ]; then
-        cp "$SSH_CONFIG" "$SSH_BACKUP" || error_exit "Failed to create SSH configuration backup."
-        log "Backup created for SSH configuration."
+    if [ ! -f "$ssh_config" ]; then
+        error_exit "SSH configuration file $ssh_config not found."
+    fi
+
+    if [ ! -f "$ssh_backup" ]; then
+        cp -p "$ssh_config" "$ssh_backup" || error_exit "Failed to create SSH configuration backup."
+        log "Backup created at $ssh_backup."
     else
-        log "SSH configuration backup already exists."
+        log "SSH configuration backup already exists at $ssh_backup."
     fi
 
-    # Update SSH port if not already set
-    if ! grep -q "^Port $SSH_PORT" "$SSH_CONFIG"; then
-        sed -i "s/^#Port 22/Port $SSH_PORT/" "$SSH_CONFIG" || error_exit "Failed to set SSH port."
-        log "SSH port set to $SSH_PORT."
-    else
-        log "SSH port is already set to $SSH_PORT."
-    fi
+    set_sshd_option "Port" "$SSH_PORT"
+    set_sshd_option "PermitRootLogin" "no"
+    set_sshd_option "PasswordAuthentication" "no"
+    set_sshd_option "Protocol" "2"
 
-    # Disable root login if not already disabled
-    if grep -q "^PermitRootLogin yes" "$SSH_CONFIG"; then
-        sed -i "s/^PermitRootLogin yes/PermitRootLogin no/" "$SSH_CONFIG" || error_exit "Failed to disable root login via SSH."
-        log "Disabled root login via SSH."
-    else
-        log "Root login via SSH is already disabled."
-    fi
-
-    # Disable password authentication if not already disabled
-    if grep -q "^PasswordAuthentication yes" "$SSH_CONFIG"; then
-        sed -i "s/^PasswordAuthentication yes/PasswordAuthentication no/" "$SSH_CONFIG" || error_exit "Failed to disable password authentication via SSH."
-        log "Disabled password authentication via SSH."
-    else
-        log "Password authentication via SSH is already disabled."
-    fi
-
-    # Ensure SSH uses protocol 2
-    if grep -q "^#Protocol 2" "$SSH_CONFIG"; then
-        sed -i "s/^#Protocol 2/Protocol 2/" "$SSH_CONFIG" || error_exit "Failed to set SSH protocol to 2."
-        log "Set SSH protocol to 2."
-    fi
-
-    # Restart SSH service to apply changes
-    systemctl restart sshd || error_exit "Failed to restart SSH service."
-    log "SSH configuration hardened and service restarted."
+    restart_ssh_service
+    log "SSH configuration hardened."
 }
 
-# Function to set secure file and directory permissions
+ensure_permission() {
+    local path="$1"
+    local desired_mode="$2"
+
+    if [ ! -e "$path" ]; then
+        log "Skipping permission update for $path (not found)."
+        return
+    fi
+
+    local current_mode
+    current_mode="$(stat -c "%a" "$path")"
+    if [ "$current_mode" -ne "$desired_mode" ]; then
+        chmod "$desired_mode" "$path" || error_exit "Failed to set permissions for $path."
+        log "Set $path permissions to $desired_mode."
+    else
+        log "$path permissions already set to $desired_mode."
+    fi
+}
+
 set_secure_permissions() {
     log "Setting secure file permissions..."
-
-    # Set permissions for /root
-    if [ "$(stat -c "%a" /root)" -ne 700 ]; then
-        chmod 700 /root || error_exit "Failed to set permissions for /root."
-        log "Set /root permissions to 700."
-    else
-        log "/root permissions are already set to 700."
-    fi
-
-    # Set permissions for SSH config
-    if [ "$(stat -c "%a" /etc/ssh/sshd_config)" -ne 600 ]; then
-        chmod 600 /etc/ssh/sshd_config || error_exit "Failed to set permissions for /etc/ssh/sshd_config."
-        log "Set /etc/ssh/sshd_config permissions to 600."
-    else
-        log "/etc/ssh/sshd_config permissions are already set to 600."
-    fi
-
-    # Secure permissions for critical system files
-    # /etc/passwd is typically 644, while /etc/shadow should be 600
-    if [ "$(stat -c "%a" /etc/passwd)" -ne 644 ]; then
-        chmod 644 /etc/passwd || error_exit "Failed to set permissions for /etc/passwd."
-        log "Set /etc/passwd permissions to 644."
-    else
-        log "/etc/passwd permissions are already set to 644."
-    fi
-
-    if [ "$(stat -c "%a" /etc/shadow)" -ne 600 ]; then
-        chmod 600 /etc/shadow || error_exit "Failed to set permissions for /etc/shadow."
-        log "Set /etc/shadow permissions to 600."
-    else
-        log "/etc/shadow permissions are already set to 600."
-    fi
-
-    log "File permissions set securely."
+    ensure_permission "/root" 700
+    ensure_permission "/etc/ssh/sshd_config" 600
+    ensure_permission "/etc/passwd" 644
+    ensure_permission "/etc/shadow" 600
+    log "File permissions verified."
 }
 
-# Function to enable automatic security updates
 enable_auto_updates() {
     log "Enabling automatic security updates..."
-    PM_CONFIGURE_AUTO_UPDATES
+    case "$PKG_MANAGER" in
+        apt)
+            if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
+                install_packages unattended-upgrades
+            fi
+            dpkg-reconfigure --priority=low unattended-upgrades >/dev/null 2>&1 || error_exit "Failed to configure unattended-upgrades."
+            ;;
+        dnf)
+            if ! systemctl list-unit-files | awk '{print $1}' | grep -Fxq "dnf-automatic.timer"; then
+                install_packages dnf-automatic
+            fi
+            systemctl enable --now dnf-automatic.timer || error_exit "Failed to enable dnf-automatic.timer."
+            ;;
+        yum)
+            if ! rpm -q yum-cron >/dev/null 2>&1; then
+                install_packages yum-cron
+            fi
+            systemctl enable yum-cron || error_exit "Failed to enable yum-cron."
+            systemctl start yum-cron || error_exit "Failed to start yum-cron."
+            ;;
+        *)
+            error_exit "Package manager not initialised."
+            ;;
+    esac
     log "Automatic security updates enabled."
 }
 
-# Function to install and configure Fail2Ban for intrusion prevention
 install_fail2ban() {
     log "Installing and configuring Fail2Ban..."
-    eval "$PM_INSTALL fail2ban" || error_exit "Failed to install Fail2Ban."
+    if ! command -v fail2ban-client >/dev/null 2>&1; then
+        install_packages fail2ban
+    fi
     systemctl enable fail2ban || error_exit "Failed to enable Fail2Ban."
-    systemctl start fail2ban || error_exit "Failed to start Fail2Ban."
+    systemctl restart fail2ban || error_exit "Failed to start Fail2Ban."
     log "Fail2Ban installed and running."
 }
 
-# Function: apply_kernel_hardening
-# Purpose: Applies kernel hardening settings to enhance system security.
 apply_kernel_hardening() {
     log "Applying kernel hardening settings..."
-    HARDENING_CONF="/etc/sysctl.d/99-hardening.conf"
+    local hardening_conf="/etc/sysctl.d/99-server-hardening.conf"
+    {
+        echo "# Managed by server_hardening.sh on $(date +'%Y-%m-%d %H:%M:%S')"
+        echo "net.ipv4.ip_forward=0"
+        echo "net.ipv4.conf.all.accept_source_route=0"
+        echo "net.ipv4.conf.default.accept_source_route=0"
+        echo "net.ipv4.conf.all.send_redirects=0"
+        echo "net.ipv4.conf.default.send_redirects=0"
+        echo "net.ipv4.tcp_syncookies=1"
+        echo "net.ipv4.conf.all.rp_filter=1"
+        echo "net.ipv4.conf.default.rp_filter=1"
+        echo "kernel.randomize_va_space=2"
+        if [ "$DISABLE_IPV6" = true ]; then
+            echo "net.ipv6.conf.all.disable_ipv6=1"
+            echo "net.ipv6.conf.default.disable_ipv6=1"
+        fi
+    } > "$hardening_conf" || error_exit "Failed to write $hardening_conf."
 
-    cat <<EOF > "$HARDENING_CONF"
-# Kernel hardening settings
-
-# Disable IP forwarding
-net.ipv4.ip_forward=0
-
-# Disable source routing
-net.ipv4.conf.all.accept_source_route=0
-net.ipv4.conf.default.accept_source_route=0
-
-# Disable ICMP redirects
-net.ipv4.conf.all.send_redirects=0
-net.ipv4.conf.default.send_redirects=0
-
-# Enable SYN cookies
-net.ipv4.tcp_syncookies=1
-
-# Enable reverse path filtering
-net.ipv4.conf.all.rp_filter=1
-net.ipv4.conf.default.rp_filter=1
-
-# Randomize virtual address space
-kernel.randomize_va_space=2
-
-# Disable IPv6 if not needed
-net.ipv6.conf.all.disable_ipv6=1
-net.ipv6.conf.default.disable_ipv6=1
-
-EOF
-
-    sysctl --system || error_exit "Failed to apply kernel hardening settings."
+    sysctl -p "$hardening_conf" >/dev/null || error_exit "Failed to apply kernel hardening settings."
     log "Kernel hardening settings applied."
 }
 
-# Function: manage_users
-# Purpose: Manages user accounts by disabling unnecessary accounts and enforcing
-#          strong password policies.
+disable_unnecessary_accounts() {
+    if [ "${#UNNECESSARY_USERS[@]}" -eq 0 ]; then
+        log "No user accounts configured for locking."
+        return
+    fi
+
+    for user in "${UNNECESSARY_USERS[@]}"; do
+        if id "$user" >/dev/null 2>&1; then
+            local status
+            status="$(passwd -S "$user" | awk '{print $2}')"
+            if [[ "$status" == "L" || "$status" == "LK" ]]; then
+                log "User $user is already locked."
+            else
+                usermod -L "$user" || error_exit "Failed to lock user $user."
+                log "Locked user $user."
+            fi
+        else
+            log "User $user not present. Skipping."
+        fi
+    done
+}
+
+update_login_defs_setting() {
+    local key="$1"
+    local value="$2"
+    local file="/etc/login.defs"
+
+    if [ ! -f "$file" ]; then
+        log "File $file not found; skipping $key update."
+        return
+    fi
+
+    if grep -q "^${key}" "$file"; then
+        sed -i -E "s|^${key}.*|${key}    ${value}|" "$file" || error_exit "Failed to update $key in $file."
+    else
+        printf "%s    %s\n" "$key" "$value" >> "$file" || error_exit "Failed to append $key to $file."
+    fi
+}
+
+enforce_password_policy() {
+    log "Enforcing password policies..."
+    update_login_defs_setting "PASS_MAX_DAYS" "90"
+    update_login_defs_setting "PASS_MIN_DAYS" "1"
+    update_login_defs_setting "PASS_WARN_AGE" "14"
+
+    local pam_file=""
+    if [ -f /etc/pam.d/common-password ]; then
+        pam_file="/etc/pam.d/common-password"
+    elif [ -f /etc/pam.d/system-auth ]; then
+        pam_file="/etc/pam.d/system-auth"
+    else
+        log "No recognised PAM password file found; skipping PAM policy update."
+        return
+    fi
+
+    if grep -qi "pam_pwquality.so" "$pam_file"; then
+        sed -i -E 's|^password\s+(requisite|required)\s+pam_pwquality\.so.*|password    requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1|I' "$pam_file" || \
+            error_exit "Failed to update pam_pwquality configuration."
+    else
+        printf "\npassword    requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1\n" >> "$pam_file" || \
+            error_exit "Failed to append pam_pwquality configuration."
+    fi
+
+    local pwquality_dir="/etc/security/pwquality.conf.d"
+    mkdir -p "$pwquality_dir"
+    cat <<'EOF' > "${pwquality_dir}/99-server-hardening.conf"
+# Managed by server_hardening.sh
+minlen = 12
+dcredit = -1
+ucredit = -1
+ocredit = -1
+lcredit = -1
+retry = 3
+EOF
+    log "Password policies configured."
+}
+
 manage_users() {
     log "Managing user accounts and enforcing password policies..."
+    disable_unnecessary_accounts
+    enforce_password_policy
+    log "User account management and password policy enforcement complete."
+}
 
-    # Remove or disable unnecessary user accounts
-    UNNECESSARY_USERS=("games" "ftp" "mail")
-    for user in "${UNNECESSARY_USERS[@]}"; do
-        if id "$user" &>/dev/null; then
-            log "Disabling user account: $user"
-            usermod -L "$user" || error_exit "Failed to lock user account $user."
-        else
-            log "User account $user does not exist. Skipping."
+main() {
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+            display_usage
+            exit 0
         fi
     done
 
-    # Enforce strong password policies using PAM
-    PAM_COMMON_PASSWORD="/etc/pam.d/common-password"
-    if [ -f "$PAM_COMMON_PASSWORD" ]; then
-        log "Configuring PAM for strong password policies..."
-        sed -i 's/^password\s\+requisite\s\+pam_pwquality.so.*/password requisite pam_pwquality.so retry=3 minlen=12 dcredit=-1 ucredit=-1 ocredit=-1 lcredit=-1/' "$PAM_COMMON_PASSWORD" || \
-            error_exit "Failed to configure PAM password policies."
-        log "PAM password policies updated."
+    require_root
+    init_logging
+    parse_arguments "$@"
+    finalize_configuration
+    detect_package_manager
+
+    log "================= Starting Server Hardening Process ================="
+
+    if [ "$SKIP_UPDATES" = true ]; then
+        log "Skipping system updates (--skip-updates)."
+    else
+        update_system
     fi
 
-    log "User account management and password policies enforced."
+    if [ "$SKIP_SERVICES" = true ]; then
+        log "Skipping service disablement (--skip-services)."
+    else
+        disable_services
+    fi
+
+    if [ "$SKIP_FIREWALL" = true ]; then
+        log "Skipping firewall configuration (--skip-firewall)."
+    else
+        configure_firewall
+    fi
+
+    if [ "$SKIP_SSH" = true ]; then
+        log "Skipping SSH hardening (--skip-ssh)."
+    else
+        harden_ssh
+    fi
+
+    if [ "$SKIP_PERMISSIONS" = true ]; then
+        log "Skipping permission updates (--skip-permissions)."
+    else
+        set_secure_permissions
+    fi
+
+    if [ "$SKIP_AUTO_UPDATES" = true ]; then
+        log "Skipping automatic update configuration (--skip-auto-updates)."
+    else
+        enable_auto_updates
+    fi
+
+    if [ "$SKIP_FAIL2BAN" = true ]; then
+        log "Skipping Fail2Ban configuration (--skip-fail2ban)."
+    else
+        install_fail2ban
+    fi
+
+    if [ "$SKIP_KERNEL" = true ]; then
+        log "Skipping kernel hardening (--skip-kernel)."
+    else
+        apply_kernel_hardening
+    fi
+
+    if [ "$SKIP_USERS" = true ]; then
+        log "Skipping user management (--skip-users)."
+    else
+        manage_users
+    fi
+
+    log "================= Server Hardening Process Complete! ================="
 }
 
-# Function: display_usage
-# Purpose: Displays usage instructions for the script.
-display_usage() {
-    echo "Usage: sudo ./server_hardening.sh"
-    echo ""
-    echo "Description:"
-    echo "  This script hardens a Debian or Red Hat-based server by performing system"
-    echo "  updates, disabling unnecessary services, configuring firewalls, hardening"
-    echo "  SSH, setting secure permissions, enabling automatic updates, installing"
-    echo "  Fail2Ban, applying kernel hardening settings, and managing user accounts."
-    echo ""
-    echo "Requirements:"
-    echo "  - Must be run as root."
-    echo "  - Requires a supported package manager (apt, dnf, or yum)."
-    echo ""
-    echo "Example:"
-    echo "  sudo ./server_hardening.sh"
-}
-
-# --------------------------- Main Script Execution -------------------------- #
-
-# Display usage if script is called with -h or --help
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-    display_usage
-    exit 0
-fi
-
-# Start of hardening process
-log "================= Starting Server Hardening Process ================="
-
-update_system
-disable_services
-configure_firewall
-harden_ssh
-set_secure_permissions
-enable_auto_updates
-install_fail2ban
-apply_kernel_hardening
-manage_users
-
-# End of Hardening Process
-log "================= Server Hardening Process Complete! ================="
-
-exit 0
+main "$@"

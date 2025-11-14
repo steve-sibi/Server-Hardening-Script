@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install shell linters
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck shfmt
+
+      - name: ShellCheck
+        run: shellcheck scripts/server_hardening.sh
+
+      - name: shfmt
+        run: shfmt -d scripts/server_hardening.sh
+
+  e2e:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-22-04
+            image: ubuntu:22.04
+            firewall: ufw
+            ssh_service: ssh
+          - name: debian-12
+            image: debian:12
+            firewall: ufw
+            ssh_service: ssh
+          - name: rocky-9
+            image: quay.io/rockylinux/rockylinux:9
+            firewall: firewalld
+            ssh_service: sshd
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Launch systemd container
+        run: |
+          container="${{ matrix.name }}"
+          docker run --name "$container" \
+            --privileged --cgroupns host \
+            --tmpfs /tmp --tmpfs /run --tmpfs /run/lock \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
+            -d "${{ matrix.image }}" /sbin/init
+
+      - name: Bootstrap prerequisites
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            set -euo pipefail
+            if command -v apt-get >/dev/null 2>&1; then
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y sudo openssh-server ufw iproute2
+              systemctl enable ssh
+              systemctl start ssh
+            else
+              dnf install -y sudo openssh-server firewalld which
+              systemctl enable sshd
+              systemctl start sshd
+            fi
+          '
+
+      - name: Copy repository into container
+        run: |
+          container="${{ matrix.name }}"
+          docker cp . "$container:/srv/hardening"
+
+      - name: Run server hardening script
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            set -euo pipefail
+            cd /srv/hardening
+            chmod +x scripts/server_hardening.sh
+            ./scripts/server_hardening.sh --skip-updates
+          '
+
+      - name: Validate hardened state
+        env:
+          FIREWALL: ${{ matrix.firewall }}
+          SSH_SERVICE: ${{ matrix.ssh_service }}
+        run: |
+          container="${{ matrix.name }}"
+          docker exec -e FIREWALL="$FIREWALL" -e SSH_SERVICE="$SSH_SERVICE" "$container" bash -lc '
+            set -euo pipefail
+            grep -q "^Port 2200" /etc/ssh/sshd_config
+            systemctl status "$SSH_SERVICE" >/dev/null
+            if [ "$FIREWALL" = "ufw" ]; then
+              ufw status | grep -q "2200"
+            else
+              firewall-cmd --list-ports | grep -q "2200/tcp"
+            fi
+            systemctl is-enabled fail2ban >/dev/null
+            sysctl net.ipv4.tcp_syncookies | grep -q "= 1"
+          '
+
+      - name: Output logs on failure
+        if: failure()
+        run: |
+          container="${{ matrix.name }}"
+          echo "---- /var/log/server_hardening.log ----"
+          docker exec "$container" bash -lc 'cat /var/log/server_hardening.log || true'
+          echo "---- /var/log/server_hardening_error.log ----"
+          docker exec "$container" bash -lc 'cat /var/log/server_hardening_error.log || true'
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "${{ matrix.name }}"
