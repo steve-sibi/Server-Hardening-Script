@@ -381,30 +381,32 @@ configure_ufw() {
 configure_firewalld() {
     systemctl enable --now firewalld || error_exit "Failed to enable Firewalld."
 
+    local target_zone="drop"
+    firewall-cmd --set-default-zone="$target_zone" > /dev/null 2>&1 || error_exit "Failed to set Firewalld runtime default zone."
+    firewall-cmd --permanent --set-default-zone="$target_zone" > /dev/null 2>&1 || error_exit "Failed to set Firewalld permanent default zone."
+
     for port in "${FIREWALL_ALLOWED_PORTS[@]}"; do
         if [[ "$port" =~ ^[0-9]+(/[a-z]+)?$ ]]; then
             local rule="$port"
             if [[ "$port" != */* ]]; then
                 rule="${port}/tcp"
             fi
-            if ! firewall-cmd --permanent --query-port="$rule" > /dev/null 2>&1; then
-                firewall-cmd --permanent --add-port="$rule" || error_exit "Failed to add port $rule to Firewalld."
-                log "Added Firewalld port rule $rule."
+            if ! firewall-cmd --permanent --zone="$target_zone" --query-port="$rule" > /dev/null 2>&1; then
+                firewall-cmd --permanent --zone="$target_zone" --add-port="$rule" || error_exit "Failed to add port $rule to Firewalld zone $target_zone."
+                log "Added Firewalld port rule $rule in zone $target_zone."
             else
-                log "Port rule $rule already present in Firewalld."
+                log "Port rule $rule already present in Firewalld zone $target_zone."
             fi
         else
-            if ! firewall-cmd --permanent --query-service="$port" > /dev/null 2>&1; then
-                firewall-cmd --permanent --add-service="$port" || error_exit "Failed to add service $port to Firewalld."
-                log "Added Firewalld service $port."
+            if ! firewall-cmd --permanent --zone="$target_zone" --query-service="$port" > /dev/null 2>&1; then
+                firewall-cmd --permanent --zone="$target_zone" --add-service="$port" || error_exit "Failed to add service $port to Firewalld zone $target_zone."
+                log "Added Firewalld service $port in zone $target_zone."
             else
-                log "Service $port already allowed in Firewalld."
+                log "Service $port already allowed in Firewalld zone $target_zone."
             fi
         fi
     done
 
-    firewall-cmd --set-default-zone=drop > /dev/null 2>&1 || error_exit "Failed to set Firewalld runtime default zone."
-    firewall-cmd --runtime-to-permanent > /dev/null 2>&1 || error_exit "Failed to persist Firewalld configuration."
     firewall-cmd --reload || error_exit "Failed to reload Firewalld."
     log "Firewalld configured."
 }
@@ -512,6 +514,34 @@ enable_auto_updates() {
     log "Automatic security updates enabled."
 }
 
+configure_fail2ban() {
+    local jail_dir="/etc/fail2ban/jail.d"
+    mkdir -p "$jail_dir"
+
+    local log_path=""
+    for candidate in /var/log/auth.log /var/log/secure /var/log/messages; do
+        if [ -f "$candidate" ]; then
+            log_path="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$log_path" ]; then
+        log_path="/var/log/auth.log"
+        touch "$log_path"
+    fi
+
+    cat << EOF > "${jail_dir}/00-server-hardening.conf"
+[sshd]
+enabled = true
+port    = ${SSH_PORT}
+logpath = ${log_path}
+backend = systemd
+maxretry = 5
+bantime = 3600
+EOF
+}
+
 install_fail2ban() {
     log "Installing and configuring Fail2Ban..."
     if ! command -v fail2ban-client > /dev/null 2>&1; then
@@ -536,6 +566,8 @@ install_fail2ban() {
                 ;;
         esac
     fi
+
+    configure_fail2ban
     systemctl enable fail2ban || error_exit "Failed to enable Fail2Ban."
     systemctl restart fail2ban || error_exit "Failed to start Fail2Ban."
     log "Fail2Ban installed and running."
