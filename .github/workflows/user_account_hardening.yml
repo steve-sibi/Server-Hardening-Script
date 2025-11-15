@@ -1,0 +1,80 @@
+name: User Account Hardening
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Launch user hardening container
+        run: |
+          docker run --name user-account-hardening \
+            --detach ubuntu:22.04 sleep infinity
+
+      - name: Bootstrap container and create dormant user
+        run: |
+          docker exec user-account-hardening bash -lc '
+            set -euo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y sudo passwd libpam-pwquality crudini
+            useradd -m -s /bin/bash dormantuser
+          '
+
+      - name: Copy repository into container
+        run: docker cp . user-account-hardening:/srv/hardening
+
+      - name: Run user account hardening script
+        run: |
+          docker exec user-account-hardening bash -lc '
+            set -euo pipefail
+            cd /srv/hardening
+            chmod +x scripts/user_account_hardening.sh
+            ./scripts/user_account_hardening.sh --threshold 0
+          '
+
+      - name: Validate user account hardening
+        run: |
+          docker exec user-account-hardening bash -lc '
+            set -euo pipefail
+            echo "=== Account status ==="
+            passwd -S dormantuser
+            passwd -S dormantuser | grep -q " L "
+            echo "=== Account aging ==="
+            chage -l dormantuser | tee /tmp/chage.txt
+            grep -Eq "Account expires.*1970" /tmp/chage.txt
+
+            echo "=== /etc/login.defs ==="
+            grep -Eq "^PASS_MAX_DAYS[[:space:]]+90" /etc/login.defs
+            grep -Eq "^PASS_MIN_DAYS[[:space:]]+1" /etc/login.defs
+            grep -Eq "^PASS_WARN_AGE[[:space:]]+14" /etc/login.defs
+
+            dropin=/etc/security/pwquality.conf.d/50-hardening.conf
+            echo "=== ${dropin} ==="
+            test -f "$dropin"
+            for key in minlen dcredit ucredit ocredit lcredit; do
+              value=$(crudini --get "$dropin" '' "$key")
+              case "$key" in
+                minlen)
+                  [ "$value" = "12" ] || exit 1
+                  ;;
+                *)
+                  [ "$value" = "-1" ] || exit 1
+                  ;;
+              esac
+              printf "%s=%s\n" "$key" "$value"
+            done
+
+            echo "User account hardening applied successfully."
+          '
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f user-account-hardening
