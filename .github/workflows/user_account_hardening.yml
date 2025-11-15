@@ -59,17 +59,10 @@ jobs:
             dropin=/etc/security/pwquality.conf.d/50-hardening.conf
             echo "=== ${dropin} ==="
             test -f "$dropin"
-            for key in minlen dcredit ucredit ocredit lcredit; do
-              value=$(crudini --get "$dropin" '' "$key")
-              case "$key" in
-                minlen)
-                  [ "$value" = "12" ] || exit 1
-                  ;;
-                *)
-                  [ "$value" = "-1" ] || exit 1
-                  ;;
-              esac
-              printf "%s=%s\n" "$key" "$value"
+            cat "$dropin"
+            grep -Eq "^minlen[[:space:]]*=[[:space:]]*12" "$dropin"
+            for key in dcredit ucredit ocredit lcredit; do
+              grep -Eq "^${key}[[:space:]]*=[[:space:]]*-1" "$dropin"
             done
 
             echo "User account hardening applied successfully."
