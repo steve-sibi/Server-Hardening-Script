@@ -95,7 +95,10 @@ jobs:
             echo "=== logrotate config ==="
             test -f /etc/logrotate.d/hardening-logs
             cat /etc/logrotate.d/hardening-logs
-            logrotate -d /etc/logrotate.d/hardening-logs >/dev/null
+            mkdir -p /var/lib/logrotate
+            LOGROTATE_STATE=/var/lib/logrotate/hardening.status
+            logrotate -v -f -s "$LOGROTATE_STATE" /etc/logrotate.d/hardening-logs
+            test -f "$LOGROTATE_STATE"
 
             echo "=== logwatch output ==="
             test -f /var/log/logwatch/logwatch.log

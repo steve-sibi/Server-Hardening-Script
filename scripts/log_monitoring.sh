@@ -5,6 +5,7 @@ set -euo pipefail
 LOGROTATE_CONF="/etc/logrotate.d/hardening-logs"
 LOGWATCH_CONF="/etc/logwatch/conf/logwatch.conf"
 LOGWATCH_OUTPUT_DIR="/var/log/logwatch"
+LOGROTATE_STATE="/var/lib/logrotate/hardening.status"
 
 OS_FAMILY=""
 PKG_MANAGER=""
@@ -144,6 +145,8 @@ install_rsyslog_stack() {
 configure_log_rotation() {
     log "Configuring log rotation for system/auth logs at $LOGROTATE_CONF"
 
+    mkdir -p /var/lib/logrotate
+
     local log_file_list
     log_file_list="$(printf "%s " "${LOG_FILES[@]}")"
 
@@ -167,7 +170,10 @@ EOF
 validate_logrotate_config() {
     if command -v logrotate >/dev/null 2>&1; then
         log "Validating logrotate configuration..."
-        logrotate -d "$LOGROTATE_CONF" >/dev/null
+        mkdir -p "$(dirname "$LOGROTATE_STATE")"
+        if ! logrotate -d -s "$LOGROTATE_STATE" "$LOGROTATE_CONF" >/tmp/logrotate-validate.log 2>&1; then
+            log "logrotate dry-run reported issues (see /tmp/logrotate-validate.log); continuing."
+        fi
     else
         log "logrotate not found; skipping validation."
     fi
