@@ -1,42 +1,22 @@
-# Automated Linux Server Hardening Script
+# Automated Linux Server Hardening Scripts
 
-This project contains a Bash script designed to automatically harden a Linux server by applying various security configurations. The script helps improve server security by disabling unused services, configuring firewall rules, securing SSH settings, and applying other security best practices.
+This project contains Bash scripts that harden Linux servers and set up supporting controls like log monitoring. They improve security by disabling unused services, configuring firewall rules and SSH, enforcing password policies, and ensuring logs are collected, rotated, and summarized.
 
-The primary goal of this script is to reduce the attack surface of the server, making it more resilient to cyberattacks. It is intended for administrators who want to automate the process of server hardening with minimal manual intervention.
+The primary goal is to reduce the attack surface and add operational visibility with minimal manual intervention.
 
 ## Features
 
-- **System Updates**: Automatically updates and upgrades system packages to ensure the latest security patches are installed.
-- **Disables Unnecessary Services**: Checks if services such as Telnet, FTP, and rsync are active before stopping and disabling them to minimize attack vectors without redundancy.
-- **Firewall Configuration**:
-  - Configures UFW (for Debian-based systems) or Firewalld (for Red Hat-based systems) to only allow necessary traffic (SSH, HTTP, HTTPS) and checks if the firewall is already configured.
-- **SSH Hardening**:
-  - Checks if the default SSH port (22) is used and changes it to port 2200 if necessary.
-  - Disables root login and password-based authentication, ensuring changes are only applied if required.
-- **File Permissions**: Ensures strict file permissions for critical directories and system files, only adjusting permissions if they aren't already correctly set.
-- **Automatic Security Updates**: Enables automatic installation of security updates for Debian and Red Hat-based systems, with checks to ensure these services are not redundantly installed or configured.
-- **Fail2Ban Setup**: Checks if Fail2Ban is already installed and enabled, protecting against brute-force attacks by monitoring failed login attempts and banning offending IP addresses.
-- **Idempotent Operations**: The script is designed to be idempotent, meaning it can be run multiple times without causing redundant actions or breaking the system.
----
-- **Root Privilege Verification:**
-  - Ensures the script is run as root to perform necessary system-level operations.
----
-- **Automated rsyslog Installation:**
-  - Detects the server's Linux distribution and installs the rsyslog package using the appropriate package manager (apt for Debian-based systems, yum for Red Hat-based systems).
-  - Enables and starts the rsyslog service to ensure logs are captured properly.
----
-- **Log Rotation Configuration:**
-  - Creates a custom log rotation policy for critical log files:
-  - /var/log/auth.log
-  - /var/log/syslog
-  - /var/log/messages
-  - Retains logs for 7 days and rotates them daily.
-  - Compresses old log files to save disk space.
-  - Reloads the rsyslog service after each log rotation.
----
-- **Error Handling and Logging:**
-  - Provides clear logs for each operation, including error messages if any step fails.
-  - Ensures the script exits gracefully if an error occurs.
+- **Server hardening (scripts/server_hardening.sh)**: System updates, service pruning, UFW/Firewalld rules, SSH hardening (defaults to port 2200), permissions tightening, automatic security updates, Fail2Ban, kernel sysctls, and idempotent re-runs.
+- **User/account hardening (scripts/user_account_hardening.sh)**: Password aging, pwquality defaults, and locking stale accounts.
+- **Web server hardening (scripts/apache_nginx_web_hardening.sh)**: Apache/Nginx security headers and TLS defaults.
+- **Log monitoring (scripts/log_monitoring.sh)**:
+  - Detects Debian/Ubuntu vs RHEL/Rocky, installs rsyslog + logrotate (and EPEL on RHEL for logwatch), and starts rsyslog.
+  - Writes a distro-aware logrotate policy for system/auth logs with `su` and `create` to avoid permission errors; pre-creates log files with correct ownership.
+  - Uses a dedicated logrotate state file under `/var/lib/logrotate/hardening.status`.
+  - Installs logwatch and generates text summaries under `/var/log/logwatch/`, with a verification run.
+  - Safe to re-run (idempotent) on supported distros.
+- **Root privilege verification**: All scripts check and require root/sudo.
+- **Error handling/logging**: Clear INFO/ERROR messages and early exits on failure.
 
 ## How to Use
 
@@ -57,7 +37,7 @@ The primary goal of this script is to reduce the attack surface of the server, m
     chmod +x server_hardening.sh
     ```
 
-3. **Run the Script with Root Privileges:**
+3. **Run the Server Hardening Script with Root Privileges:**
 
     Execute the script using sudo to ensure it has the necessary permissions to modify the system configurations:
     
@@ -65,7 +45,17 @@ The primary goal of this script is to reduce the attack surface of the server, m
     sudo ./server_hardening.sh
     ```
 
-4. **Reboot the Server (Optional but Recommended):**
+4. **Run the Log Monitoring Script (rsyslog + logrotate + logwatch):**
+
+    ```bash
+    sudo ./log_monitoring.sh
+    ```
+
+    - Debian/Ubuntu: rotates `/var/log/syslog` and `/var/log/auth.log` as root:adm.
+    - RHEL/Rocky: rotates `/var/log/messages` and `/var/log/secure` as root:root and enables EPEL for logwatch.
+    - Outputs logwatch summaries to `/var/log/logwatch/` and uses `/var/lib/logrotate/hardening.status` for rotation state.
+
+5. **Reboot the Server (Optional but Recommended):**
 
     After running the script, it's advisable to reboot the server to ensure all changes take effect.
 
@@ -82,6 +72,13 @@ This script is compatible with the following Linux distributions:
 
 Ensure you are running the script as `root` or using `sudo` to allow it to make system-level changes.
 
+## CI Workflows
+
+GitHub Actions workflows run only when their related files change:
+- `server_hardening.yml` triggers on `scripts/server_hardening.sh` changes.
+- `user_account_hardening.yml` triggers on `scripts/user_account_hardening.sh` changes.
+- `log_monitoring.yml` triggers on `scripts/log_monitoring.sh` changes and validates rsyslog/logrotate/logwatch in Debian, Ubuntu, and Rocky containers.
+
 ## Contributing
 
 Contributions are welcome! These implementations are based off experiences I have had at work. If you have ideas for improvements or new features, feel free to open an issue or create a pull request.
@@ -95,6 +92,5 @@ Contributions are welcome! These implementations are based off experiences I hav
 - Open a Pull Request.
 
 Please ensure your code follows the existing style and includes comments where necessary.
-
 
 
