@@ -1,0 +1,113 @@
+name: Log Monitoring Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-22-04
+            image: ubuntu:22.04
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
+          - name: debian-12
+            image: debian:12
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
+          - name: rocky-9
+            image: quay.io/rockylinux/rockylinux:9
+            init_cmd: |
+              set -e
+              dnf install -y systemd
+              exec /usr/lib/systemd/systemd
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Launch systemd container
+        env:
+          INIT_CMD: ${{ matrix.init_cmd }}
+        run: |
+          container="${{ matrix.name }}"
+          docker run --name "$container" \
+            --privileged --cgroupns host \
+            --tmpfs /tmp --tmpfs /run --tmpfs /run/lock \
+            -e container=docker \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -d "${{ matrix.image }}" bash -lc "$INIT_CMD"
+
+      - name: Wait for systemd to initialize
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            until systemctl list-units >/dev/null 2>&1; do
+              sleep 2
+            done
+          '
+
+      - name: Copy repository into container
+        run: |
+          container="${{ matrix.name }}"
+          docker cp . "$container:/srv/hardening"
+
+      - name: Run log monitoring script
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            set -euo pipefail
+            cd /srv/hardening
+            chmod +x scripts/log_monitoring.sh
+            ./scripts/log_monitoring.sh
+          '
+
+      - name: Validate log monitoring outputs
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            set -euo pipefail
+            echo "=== rsyslog status ==="
+            systemctl status rsyslog --no-pager
+
+            echo "=== logrotate config ==="
+            test -f /etc/logrotate.d/hardening-logs
+            cat /etc/logrotate.d/hardening-logs
+            logrotate -d /etc/logrotate.d/hardening-logs >/dev/null
+
+            echo "=== logwatch output ==="
+            test -f /var/log/logwatch/logwatch.log
+            ls -l /var/log/logwatch/
+            test -f /var/log/logwatch/logwatch-latest.log
+            # Ensure files are non-empty
+            test -s /var/log/logwatch/logwatch.log
+            test -s /var/log/logwatch/logwatch-latest.log
+          '
+
+      - name: Output diagnostics on failure
+        if: failure()
+        run: |
+          container="${{ matrix.name }}"
+          echo "---- logrotate drop-in ----"
+          docker exec "$container" bash -lc 'cat /etc/logrotate.d/hardening-logs || true'
+          echo "---- logwatch latest ----"
+          docker exec "$container" bash -lc 'tail -n 200 /var/log/logwatch/logwatch-latest.log || true'
+          echo "---- rsyslog status ----"
+          docker exec "$container" bash -lc 'systemctl status rsyslog --no-pager || true'
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "${{ matrix.name }}"
