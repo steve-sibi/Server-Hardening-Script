@@ -1,7 +1,13 @@
 #!/bin/bash
 
+# Harden local user accounts by locking stale logins and enforcing password aging/quality
+# requirements. The script is cautious: actions can be previewed via --dry-run and it
+# merges configuration instead of clobbering vendor-supplied files.
+
 DRY_RUN=false
 INACTIVITY_THRESHOLD=30
+
+# ------------- Logging helpers -------------
 
 log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $1"
@@ -11,6 +17,8 @@ error_exit() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1"
     exit 1
 }
+
+# ------------- CLI parsing / validation -------------
 
 usage() {
     cat << EOF
@@ -56,6 +64,8 @@ ensure_root() {
     fi
 }
 
+# ------------- Configuration helpers -------------
+
 update_login_def() {
     local key="$1"
     local desired="$2"
@@ -98,6 +108,7 @@ set_pwquality_option() {
 }
 
 disable_inactive_accounts() {
+    # Build two sorted lists from lastlog: everyone seen and those inactive for the threshold.
     log "Evaluating user accounts inactive for at least ${INACTIVITY_THRESHOLD} days..."
 
     local tmp_all tmp_inactive
@@ -130,6 +141,7 @@ disable_inactive_accounts() {
         return
     fi
 
+    # Iterate user-by-user so we can skip system/service accounts and fail fast if locking fails.
     for user in "${inactive_users[@]}"; do
         [[ -z "$user" ]] && continue
 
@@ -171,6 +183,7 @@ disable_inactive_accounts() {
 }
 
 enforce_password_policy() {
+    # Enforce both password aging (in login.defs) and pwquality complexity using a drop-in file.
     log "Configuring password policies..."
     command -v crudini > /dev/null 2>&1 || error_exit "crudini is required to manage pwquality drop-in files."
 
@@ -198,7 +211,11 @@ enforce_password_policy() {
     log "Password policies applied."
 }
 
-# Main Execution
+# ------------- Main execution flow -------------
+# 1. Parse CLI arguments (threshold, dry run, help)
+# 2. Ensure we are running as root before making system changes
+# 3. Disable inactive accounts
+# 4. Enforce password aging + quality policies
 parse_args "$@"
 ensure_root
 log "Starting user account hardening..."
