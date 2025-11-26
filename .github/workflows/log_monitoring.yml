@@ -88,8 +88,13 @@ jobs:
             set -euo pipefail
             echo "=== rsyslog status ==="
             if ! systemctl status rsyslog --no-pager; then
-              systemctl restart rsyslog
-              systemctl status rsyslog --no-pager
+              systemctl reset-failed rsyslog || true
+              systemctl restart rsyslog || true
+              sleep 5
+              if ! systemctl status rsyslog --no-pager; then
+                journalctl -xeu rsyslog || true
+                exit 1
+              fi
             fi
 
             echo "=== logrotate config ==="

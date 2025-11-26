@@ -147,6 +147,13 @@ configure_log_rotation() {
 
     mkdir -p /var/lib/logrotate
 
+    # Ensure target log files exist with correct ownership/perms to avoid logrotate warnings
+    for logfile in "${LOG_FILES[@]}"; do
+        touch "$logfile"
+        chown root:"$LOGROTATE_SU_GROUP" "$logfile" || true
+        chmod 0640 "$logfile" || true
+    done
+
     local log_file_list
     log_file_list="$(printf "%s " "${LOG_FILES[@]}")"
 
@@ -181,6 +188,9 @@ validate_logrotate_config() {
 
 configure_logwatch() {
     log "Installing logwatch and configuring daily summary to file..."
+    if [ "$OS_FAMILY" = "rhel" ] && ! is_installed epel-release; then
+        install_packages epel-release
+    fi
     install_packages logwatch
 
     mkdir -p /etc/logwatch/conf "$LOGWATCH_OUTPUT_DIR"
