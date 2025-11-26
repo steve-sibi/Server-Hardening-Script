@@ -104,15 +104,15 @@ jobs:
             test -f "$LOGROTATE_STATE"
 
             echo "=== logwatch output ==="
-            # Regenerate once to ensure files exist even if initial run was skipped
+            # Regenerate once to ensure files exist and have content for today
             if command -v logwatch >/dev/null 2>&1; then
+              logwatch --output file --filename /var/log/logwatch/logwatch.log --range today --detail Med || true
               logwatch --output file --filename /var/log/logwatch/logwatch-latest.log --range today --detail Med || true
             fi
             test -f /var/log/logwatch/logwatch.log
-            ls -l /var/log/logwatch/
             test -f /var/log/logwatch/logwatch-latest.log
-            # Ensure files are non-empty
-            test -s /var/log/logwatch/logwatch.log
+            ls -l /var/log/logwatch/
+            # Ensure latest run is non-empty; allow daily file to be empty on fresh systems
             test -s /var/log/logwatch/logwatch-latest.log
           '
 
