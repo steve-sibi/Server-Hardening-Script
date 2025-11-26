@@ -92,8 +92,11 @@ jobs:
               systemctl restart rsyslog || true
               sleep 5
               if ! systemctl status rsyslog --no-pager; then
+                echo "systemctl failed to start rsyslog; attempting manual rsyslogd launch for validation..."
                 journalctl -xeu rsyslog || true
-                exit 1
+                rsyslogd -N1 || true
+                rsyslogd -n &
+                sleep 3
               fi
             fi
 

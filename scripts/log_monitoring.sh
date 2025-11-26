@@ -6,6 +6,7 @@ LOGROTATE_CONF="/etc/logrotate.d/hardening-logs"
 LOGWATCH_CONF="/etc/logwatch/conf/logwatch.conf"
 LOGWATCH_OUTPUT_DIR="/var/log/logwatch"
 LOGROTATE_STATE="/var/lib/logrotate/hardening.status"
+RSYSLOG_STATE_DIR="/var/lib/rsyslog"
 
 OS_FAMILY=""
 PKG_MANAGER=""
@@ -138,6 +139,9 @@ enable_and_start_rsyslog() {
 install_rsyslog_stack() {
     log "Ensuring rsyslog and logrotate are installed..."
     install_packages rsyslog logrotate
+    mkdir -p "$RSYSLOG_STATE_DIR"
+    touch "$RSYSLOG_STATE_DIR/imjournal.state"
+    chmod 0755 "$RSYSLOG_STATE_DIR"
     enable_and_start_rsyslog
     log "rsyslog installed and running."
 }
