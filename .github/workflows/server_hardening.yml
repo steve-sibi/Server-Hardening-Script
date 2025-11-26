@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - scripts/server_hardening.sh
+      - .github/workflows/server_hardening.yml
   pull_request:
+    paths:
+      - scripts/server_hardening.sh
+      - .github/workflows/server_hardening.yml
 
 jobs:
   lint:

@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - scripts/user_account_hardening.sh
+      - .github/workflows/user_account_hardening.yml
   pull_request:
+    paths:
+      - scripts/user_account_hardening.sh
+      - .github/workflows/user_account_hardening.yml
 
 jobs:
   test:

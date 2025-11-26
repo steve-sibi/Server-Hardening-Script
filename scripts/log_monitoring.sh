@@ -10,6 +10,7 @@ OS_FAMILY=""
 PKG_MANAGER=""
 APT_UPDATED=false
 LOG_FILES=()
+LOGROTATE_SU_GROUP="root"
 
 log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $*"
@@ -27,21 +28,48 @@ require_root() {
 }
 
 detect_os() {
-    if [ -f /etc/debian_version ]; then
-        OS_FAMILY="debian"
-        PKG_MANAGER="apt"
-        LOG_FILES=(/var/log/syslog /var/log/auth.log)
-    elif [ -f /etc/redhat-release ]; then
-        OS_FAMILY="rhel"
-        if command -v dnf >/dev/null 2>&1; then
-            PKG_MANAGER="dnf"
-        else
-            PKG_MANAGER="yum"
-        fi
-        LOG_FILES=(/var/log/messages /var/log/secure)
-    else
-        error_exit "Unsupported distribution. Only Debian- or RHEL-based systems are supported."
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
     fi
+
+    case "${ID_LIKE:-$ID}" in
+        *debian*)
+            OS_FAMILY="debian"
+            PKG_MANAGER="apt"
+            LOG_FILES=(/var/log/syslog /var/log/auth.log)
+            LOGROTATE_SU_GROUP="adm"
+            ;;
+        *rhel*|*fedora*|*centos*)
+            OS_FAMILY="rhel"
+            if command -v dnf >/dev/null 2>&1; then
+                PKG_MANAGER="dnf"
+            else
+                PKG_MANAGER="yum"
+            fi
+            LOG_FILES=(/var/log/messages /var/log/secure)
+            LOGROTATE_SU_GROUP="root"
+            ;;
+        *)
+            if [ -f /etc/debian_version ]; then
+                OS_FAMILY="debian"
+                PKG_MANAGER="apt"
+                LOG_FILES=(/var/log/syslog /var/log/auth.log)
+                LOGROTATE_SU_GROUP="adm"
+            elif [ -f /etc/redhat-release ]; then
+                OS_FAMILY="rhel"
+                if command -v dnf >/dev/null 2>&1; then
+                    PKG_MANAGER="dnf"
+                else
+                    PKG_MANAGER="yum"
+                fi
+                LOG_FILES=(/var/log/messages /var/log/secure)
+                LOGROTATE_SU_GROUP="root"
+            else
+                error_exit "Unsupported distribution. Only Debian- or RHEL-based systems are supported."
+            fi
+            ;;
+    esac
 }
 
 is_installed() {
@@ -121,8 +149,10 @@ configure_log_rotation() {
 
     cat <<EOF > "$LOGROTATE_CONF"
 $log_file_list{
+    su root $LOGROTATE_SU_GROUP
     rotate 7
     daily
+    create 0640 root $LOGROTATE_SU_GROUP
     missingok
     notifempty
     compress

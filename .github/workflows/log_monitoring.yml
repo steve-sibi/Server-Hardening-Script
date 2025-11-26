@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - scripts/log_monitoring.sh
+      - .github/workflows/log_monitoring.yml
   pull_request:
+    paths:
+      - scripts/log_monitoring.sh
+      - .github/workflows/log_monitoring.yml
 
 jobs:
   test:
@@ -81,7 +87,10 @@ jobs:
           docker exec "$container" bash -lc '
             set -euo pipefail
             echo "=== rsyslog status ==="
-            systemctl status rsyslog --no-pager
+            if ! systemctl status rsyslog --no-pager; then
+              systemctl restart rsyslog
+              systemctl status rsyslog --no-pager
+            fi
 
             echo "=== logrotate config ==="
             test -f /etc/logrotate.d/hardening-logs
