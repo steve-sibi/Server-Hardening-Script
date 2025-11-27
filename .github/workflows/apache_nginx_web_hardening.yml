@@ -1,0 +1,217 @@
+name: Apache/Nginx Web Hardening Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/apache_nginx_web_hardening.sh
+      - .github/workflows/apache_nginx_web_hardening.yml
+  pull_request:
+    paths:
+      - scripts/apache_nginx_web_hardening.sh
+      - .github/workflows/apache_nginx_web_hardening.yml
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install shell linters
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck shfmt
+
+      - name: ShellCheck
+        run: shellcheck scripts/apache_nginx_web_hardening.sh
+
+      - name: shfmt
+        run: shfmt -i 4 -ci -sr -d scripts/apache_nginx_web_hardening.sh
+
+  e2e:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-22-04-apache
+            image: ubuntu:22.04
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
+            server: apache
+            install_cmd: export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y apache2 curl
+            service: apache2
+            config_path: /etc/apache2/conf-available/security-headers.conf
+            config_test: apache2ctl configtest
+            module_check: apache2ctl -M | grep -q headers_module
+          - name: ubuntu-22-04-nginx
+            image: ubuntu:22.04
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
+            server: nginx
+            install_cmd: export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y nginx curl
+            service: nginx
+            config_path: /etc/nginx/conf.d/security.conf
+            config_test: nginx -t
+            module_check: ""
+          - name: debian-12-apache
+            image: debian:12
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
+            server: apache
+            install_cmd: export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y apache2 curl
+            service: apache2
+            config_path: /etc/apache2/conf-available/security-headers.conf
+            config_test: apache2ctl configtest
+            module_check: apache2ctl -M | grep -q headers_module
+          - name: debian-12-nginx
+            image: debian:12
+            init_cmd: |
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y systemd systemd-sysv
+              exec /lib/systemd/systemd
+            server: nginx
+            install_cmd: export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -y nginx curl
+            service: nginx
+            config_path: /etc/nginx/conf.d/security.conf
+            config_test: nginx -t
+            module_check: ""
+          - name: rocky-9-apache
+            image: quay.io/rockylinux/rockylinux:9
+            init_cmd: |
+              set -e
+              dnf install -y systemd
+              exec /usr/lib/systemd/systemd
+            server: apache
+            install_cmd: dnf install -y httpd curl which
+            service: httpd
+            config_path: /etc/httpd/conf.d/security-headers.conf
+            config_test: httpd -t
+            module_check: httpd -M | grep -q headers_module
+          - name: rocky-9-nginx
+            image: quay.io/rockylinux/rockylinux:9
+            init_cmd: |
+              set -e
+              dnf install -y systemd
+              exec /usr/lib/systemd/systemd
+            server: nginx
+            install_cmd: dnf install -y nginx curl which
+            service: nginx
+            config_path: /etc/nginx/conf.d/security.conf
+            config_test: nginx -t
+            module_check: ""
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Launch systemd container
+        env:
+          INIT_CMD: ${{ matrix.init_cmd }}
+        run: |
+          container="${{ matrix.name }}"
+          docker run --name "$container" \
+            --privileged --cgroupns host \
+            --tmpfs /tmp --tmpfs /run --tmpfs /run/lock \
+            -e container=docker \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -d "${{ matrix.image }}" bash -lc "$INIT_CMD"
+
+      - name: Wait for systemd to initialize
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            until systemctl list-units >/dev/null 2>&1; do
+              sleep 2
+            done
+          '
+
+      - name: Install web server
+        env:
+          INSTALL_CMD: ${{ matrix.install_cmd }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc "set -euo pipefail; ${INSTALL_CMD}; systemctl enable --now ${SERVICE}"
+
+      - name: Copy repository into container
+        run: |
+          container="${{ matrix.name }}"
+          docker cp . "$container:/srv/hardening"
+
+      - name: Run web hardening script
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            set -euo pipefail
+            cd /srv/hardening
+            chmod +x scripts/apache_nginx_web_hardening.sh
+            ./scripts/apache_nginx_web_hardening.sh
+          '
+
+      - name: Validate hardening
+        env:
+          SERVICE: ${{ matrix.service }}
+          CONFIG_PATH: ${{ matrix.config_path }}
+          CONFIG_TEST: ${{ matrix.config_test }}
+          MODULE_CHECK: ${{ matrix.module_check }}
+        run: |
+          container="${{ matrix.name }}"
+          docker exec "$container" bash -lc '
+            set -euo pipefail
+            echo "=== Service status ==="
+            systemctl status '"$SERVICE"' --no-pager
+
+            echo "=== Config presence ==="
+            test -f '"$CONFIG_PATH"'
+            grep -q "X-Frame-Options" '"$CONFIG_PATH"'
+            grep -q "X-Content-Type-Options" '"$CONFIG_PATH"'
+            grep -q "Content-Security-Policy" '"$CONFIG_PATH"'
+
+            echo "=== Config test ==="
+            '"$CONFIG_TEST"'
+            if [ -n "'"$MODULE_CHECK"'" ]; then
+              '"$MODULE_CHECK"'
+            fi
+
+            echo "=== Header check ==="
+            curl -I http://localhost | grep -i "X-Frame-Options: DENY"
+            curl -I http://localhost | grep -i "X-Content-Type-Options: nosniff"
+            curl -I http://localhost | grep -i "Content-Security-Policy: default-src '\''self'\''"
+          '
+
+      - name: Output diagnostics on failure
+        if: failure()
+        env:
+          SERVICE: ${{ matrix.service }}
+          CONFIG_PATH: ${{ matrix.config_path }}
+        run: |
+          container="${{ matrix.name }}"
+          echo "---- Service status ----"
+          docker exec "$container" bash -lc 'systemctl status '"$SERVICE"' --no-pager || true'
+          echo "---- Security config ----"
+          docker exec "$container" bash -lc 'cat '"$CONFIG_PATH"' || true'
+          echo "---- Nginx/Apache error logs ----"
+          docker exec "$container" bash -lc 'tail -n 200 /var/log/nginx/error.log 2>/dev/null || true'
+          docker exec "$container" bash -lc 'tail -n 200 /var/log/httpd/error_log 2>/dev/null || true'
+          docker exec "$container" bash -lc 'tail -n 200 /var/log/apache2/error.log 2>/dev/null || true'
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f "${{ matrix.name }}"
