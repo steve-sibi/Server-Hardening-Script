@@ -173,28 +173,33 @@ jobs:
           MODULE_CHECK: ${{ matrix.module_check }}
         run: |
           container="${{ matrix.name }}"
-          docker exec "$container" bash -lc '
-            set -euo pipefail
-            echo "=== Service status ==="
-            systemctl status '"$SERVICE"' --no-pager
+          docker exec \
+            -e SERVICE="$SERVICE" \
+            -e CONFIG_PATH="$CONFIG_PATH" \
+            -e CONFIG_TEST="$CONFIG_TEST" \
+            -e MODULE_CHECK="$MODULE_CHECK" \
+            "$container" bash -s <<'EOF'
+set -euo pipefail
+echo "=== Service status ==="
+systemctl status "$SERVICE" --no-pager
 
-            echo "=== Config presence ==="
-            test -f '"$CONFIG_PATH"'
-            grep -q "X-Frame-Options" '"$CONFIG_PATH"'
-            grep -q "X-Content-Type-Options" '"$CONFIG_PATH"'
-            grep -q "Content-Security-Policy" '"$CONFIG_PATH"'
+echo "=== Config presence ==="
+test -f "$CONFIG_PATH"
+grep -q "X-Frame-Options" "$CONFIG_PATH"
+grep -q "X-Content-Type-Options" "$CONFIG_PATH"
+grep -q "Content-Security-Policy" "$CONFIG_PATH"
 
-            echo "=== Config test ==="
-            '"$CONFIG_TEST"'
-            if [ -n "'"$MODULE_CHECK"'" ]; then
-              '"$MODULE_CHECK"'
-            fi
+echo "=== Config test ==="
+eval "$CONFIG_TEST"
+if [ -n "${MODULE_CHECK:-}" ]; then
+  eval "$MODULE_CHECK"
+fi
 
-            echo "=== Header check ==="
-            curl -I http://localhost | grep -i "X-Frame-Options: DENY"
-            curl -I http://localhost | grep -i "X-Content-Type-Options: nosniff"
-            curl -I http://localhost | grep -i "Content-Security-Policy: default-src '\''self'\''"
-          '
+echo "=== Header check ==="
+curl -I http://localhost | grep -i "X-Frame-Options: DENY"
+curl -I http://localhost | grep -i "X-Content-Type-Options: nosniff"
+curl -I http://localhost | grep -i "Content-Security-Policy: default-src 'self'"
+EOF
 
       - name: Output diagnostics on failure
         if: failure()
@@ -211,6 +216,9 @@ jobs:
           docker exec "$container" bash -lc 'tail -n 200 /var/log/nginx/error.log 2>/dev/null || true'
           docker exec "$container" bash -lc 'tail -n 200 /var/log/httpd/error_log 2>/dev/null || true'
           docker exec "$container" bash -lc 'tail -n 200 /var/log/apache2/error.log 2>/dev/null || true'
+          docker exec "$container" bash -lc 'journalctl -u nginx -n 200 --no-pager 2>/dev/null || true'
+          docker exec "$container" bash -lc 'journalctl -u apache2 -n 200 --no-pager 2>/dev/null || true'
+          docker exec "$container" bash -lc 'journalctl -u httpd -n 200 --no-pager 2>/dev/null || true'
 
       - name: Cleanup
         if: always()
