@@ -17,7 +17,7 @@ error_exit() {
 
 restart_service() {
     local service=$1
-    if command -v systemctl >/dev/null 2>&1; then
+    if command -v systemctl > /dev/null 2>&1; then
         systemctl reload "$service" || systemctl restart "$service" || error_exit "Failed to reload or restart $service."
     else
         service "$service" reload || service "$service" restart || error_exit "Failed to reload or restart $service."
@@ -30,21 +30,21 @@ harden_apache() {
     if [ -d /etc/apache2 ]; then
         apache_conf="/etc/apache2/conf-available/security-headers.conf"
         mkdir -p /etc/apache2/conf-available
-        cat <<'EOF' > "$apache_conf"
+        cat << 'EOF' > "$apache_conf"
 <IfModule mod_headers.c>
     Header always set X-Frame-Options "DENY"
     Header always set X-Content-Type-Options "nosniff"
     Header always set Content-Security-Policy "default-src 'self'"
 </IfModule>
 EOF
-        command -v a2enmod >/dev/null 2>&1 || error_exit "a2enmod not found; cannot enable headers module."
-        a2enmod headers >/dev/null
-        command -v a2enconf >/dev/null 2>&1 || error_exit "a2enconf not found; cannot enable security headers config."
-        a2enconf security-headers >/dev/null
+        command -v a2enmod > /dev/null 2>&1 || error_exit "a2enmod not found; cannot enable headers module."
+        a2enmod headers > /dev/null
+        command -v a2enconf > /dev/null 2>&1 || error_exit "a2enconf not found; cannot enable security headers config."
+        a2enconf security-headers > /dev/null
         restart_service apache2
     elif [ -d /etc/httpd ]; then
         apache_conf="/etc/httpd/conf.d/security-headers.conf"
-        cat <<'EOF' > "$apache_conf"
+        cat << 'EOF' > "$apache_conf"
 <IfModule headers_module>
     Header always set X-Frame-Options "DENY"
     Header always set X-Content-Type-Options "nosniff"
@@ -63,7 +63,7 @@ harden_nginx() {
     local nginx_conf="/etc/nginx/conf.d/security.conf"
 
     [ -d /etc/nginx/conf.d ] || error_exit "Nginx conf.d directory not found."
-    cat <<'EOF' > "$nginx_conf"
+    cat << 'EOF' > "$nginx_conf"
 add_header X-Frame-Options "DENY" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header Content-Security-Policy "default-src 'self'" always;
@@ -76,11 +76,11 @@ EOF
 apache_present=false
 nginx_present=false
 
-if command -v apache2 >/dev/null 2>&1 || command -v apachectl >/dev/null 2>&1 || command -v httpd >/dev/null 2>&1; then
+if command -v apache2 > /dev/null 2>&1 || command -v apachectl > /dev/null 2>&1 || command -v httpd > /dev/null 2>&1; then
     apache_present=true
 fi
 
-if command -v nginx >/dev/null 2>&1; then
+if command -v nginx > /dev/null 2>&1; then
     nginx_present=true
 fi
 
