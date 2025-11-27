@@ -179,27 +179,27 @@ jobs:
             -e CONFIG_TEST="$CONFIG_TEST" \
             -e MODULE_CHECK="$MODULE_CHECK" \
             "$container" bash -s <<'EOF'
-set -euo pipefail
-echo "=== Service status ==="
-systemctl status "$SERVICE" --no-pager
+          set -euo pipefail
+          echo "=== Service status ==="
+          systemctl status "$SERVICE" --no-pager
 
-echo "=== Config presence ==="
-test -f "$CONFIG_PATH"
-grep -q "X-Frame-Options" "$CONFIG_PATH"
-grep -q "X-Content-Type-Options" "$CONFIG_PATH"
-grep -q "Content-Security-Policy" "$CONFIG_PATH"
+          echo "=== Config presence ==="
+          test -f "$CONFIG_PATH"
+          grep -q "X-Frame-Options" "$CONFIG_PATH"
+          grep -q "X-Content-Type-Options" "$CONFIG_PATH"
+          grep -q "Content-Security-Policy" "$CONFIG_PATH"
 
-echo "=== Config test ==="
-eval "$CONFIG_TEST"
-if [ -n "${MODULE_CHECK:-}" ]; then
-  eval "$MODULE_CHECK"
-fi
+          echo "=== Config test ==="
+          eval "$CONFIG_TEST"
+          if [ -n "${MODULE_CHECK:-}" ]; then
+            eval "$MODULE_CHECK"
+          fi
 
-echo "=== Header check ==="
-curl -I http://localhost | grep -i "X-Frame-Options: DENY"
-curl -I http://localhost | grep -i "X-Content-Type-Options: nosniff"
-curl -I http://localhost | grep -i "Content-Security-Policy: default-src 'self'"
-EOF
+          echo "=== Header check ==="
+          curl -I http://localhost | grep -i "X-Frame-Options: DENY"
+          curl -I http://localhost | grep -i "X-Content-Type-Options: nosniff"
+          curl -I http://localhost | grep -i "Content-Security-Policy: default-src 'self'"
+          EOF
 
       - name: Output diagnostics on failure
         if: failure()
