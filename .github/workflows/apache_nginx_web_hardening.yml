@@ -100,7 +100,9 @@ jobs:
               dnf install -y systemd
               exec /usr/lib/systemd/systemd
             server: apache
-            install_cmd: dnf install -y httpd curl which
+            install_cmd: |
+              dnf remove -y curl-minimal || true
+              dnf install -y --allowerasing httpd curl which
             service: httpd
             config_path: /etc/httpd/conf.d/security-headers.conf
             config_test: httpd -t
@@ -112,7 +114,9 @@ jobs:
               dnf install -y systemd
               exec /usr/lib/systemd/systemd
             server: nginx
-            install_cmd: dnf install -y nginx curl which
+            install_cmd: |
+              dnf remove -y curl-minimal || true
+              dnf install -y --allowerasing nginx curl which
             service: nginx
             config_path: /etc/nginx/conf.d/security.conf
             config_test: nginx -t
