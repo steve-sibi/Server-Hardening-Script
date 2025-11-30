@@ -77,15 +77,82 @@ EOF
 apache_present=false
 nginx_present=false
 
-if command -v apache2 > /dev/null 2>&1 || command -v apachectl > /dev/null 2>&1 || command -v httpd > /dev/null 2>&1; then
-    apache_present=true
-elif [ -d /etc/apache2 ] || [ -d /etc/httpd ]; then
+detect_apache() {
+    local detected=false
+
+    for cmd in apache2 apache2ctl apachectl httpd; do
+        if command -v "$cmd" > /dev/null 2>&1; then
+            detected=true
+            break
+        fi
+    done
+
+    if [ "$detected" = false ] && { [ -d /etc/apache2 ] || [ -d /etc/httpd ]; }; then
+        detected=true
+    fi
+
+    if [ "$detected" = false ] && command -v systemctl > /dev/null 2>&1; then
+        if systemctl list-unit-files --type=service 2>/dev/null | grep -qiE '^(apache2|httpd)\.service'; then
+            detected=true
+        fi
+    fi
+
+    if [ "$detected" = false ]; then
+        if command -v dpkg > /dev/null 2>&1 && dpkg -s apache2 > /dev/null 2>&1; then
+            detected=true
+        elif command -v rpm > /dev/null 2>&1 && rpm -q httpd > /dev/null 2>&1; then
+            detected=true
+        fi
+    fi
+
+    if [ "$detected" = false ] && command -v pgrep > /dev/null 2>&1; then
+        if pgrep -x apache2 > /dev/null 2>&1 || pgrep -x httpd > /dev/null 2>&1; then
+            detected=true
+        fi
+    fi
+
+    [ "$detected" = true ]
+}
+
+detect_nginx() {
+    local detected=false
+
+    if command -v nginx > /dev/null 2>&1; then
+        detected=true
+    fi
+
+    if [ "$detected" = false ] && [ -d /etc/nginx ]; then
+        detected=true
+    fi
+
+    if [ "$detected" = false ] && command -v systemctl > /dev/null 2>&1; then
+        if systemctl list-unit-files --type=service 2>/dev/null | grep -qi '^nginx\.service'; then
+            detected=true
+        fi
+    fi
+
+    if [ "$detected" = false ]; then
+        if command -v dpkg > /dev/null 2>&1 && dpkg -s nginx > /dev/null 2>&1; then
+            detected=true
+        elif command -v rpm > /dev/null 2>&1 && rpm -q nginx > /dev/null 2>&1; then
+            detected=true
+        fi
+    fi
+
+    if [ "$detected" = false ] && command -v pgrep > /dev/null 2>&1; then
+        if pgrep -x nginx > /dev/null 2>&1; then
+            detected=true
+        fi
+    fi
+
+    [ "$detected" = true ]
+}
+
+if detect_apache; then
     apache_present=true
 fi
 
-if command -v nginx > /dev/null 2>&1; then
-    nginx_present=true
-elif [ -d /etc/nginx ]; then
+if detect_nginx; then
     nginx_present=true
 fi
 
