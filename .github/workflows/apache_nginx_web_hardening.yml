@@ -170,12 +170,15 @@ jobs:
       - name: Run web hardening script
         run: |
           container="${{ matrix.name }}"
-          docker exec "$container" env PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" bash -lc '
-            set -euo pipefail
-            cd /srv/hardening
-            chmod +x scripts/apache_nginx_web_hardening.sh
-            ./scripts/apache_nginx_web_hardening.sh
-          '
+          docker exec \
+            -e SERVER_HINT="${{ matrix.server }}" \
+            -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            "$container" bash -lc '
+              set -euo pipefail
+              cd /srv/hardening
+              chmod +x scripts/apache_nginx_web_hardening.sh
+              ./scripts/apache_nginx_web_hardening.sh
+            '
 
       - name: Validate hardening
         env:

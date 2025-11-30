@@ -8,12 +8,16 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 log() {
-    echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $1"
+    echo "$(date +'%Y-%m-%d %H:%M:%S') [INFO] $*"
 }
 
 error_exit() {
-    echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $1"
+    echo "$(date +'%Y-%m-%d %H:%M:%S') [ERROR] $*"
     exit 1
+}
+
+cmd_exists() {
+    command -v "$1" > /dev/null 2>&1
 }
 
 restart_service() {
@@ -77,84 +81,136 @@ EOF
 apache_present=false
 nginx_present=false
 
+server_hint="${SERVER_HINT:-}"
+
 detect_apache() {
-    local detected=false
-
-    for cmd in apache2 apache2ctl apachectl httpd; do
-        if command -v "$cmd" > /dev/null 2>&1; then
-            detected=true
-            break
-        fi
-    done
-
-    if [ "$detected" = false ] && { [ -d /etc/apache2 ] || [ -d /etc/httpd ]; }; then
-        detected=true
+    if cmd_exists apache2 || cmd_exists apache2ctl || cmd_exists apachectl || cmd_exists httpd; then
+        return 0
     fi
 
-    if [ "$detected" = false ] && command -v systemctl > /dev/null 2>&1; then
-        if systemctl list-unit-files --type=service 2> /dev/null | grep -qiE '^(apache2|httpd)\.service'; then
-            detected=true
-        fi
+    if [ -d /etc/apache2 ] || [ -d /etc/httpd ]; then
+        return 0
     fi
 
-    if [ "$detected" = false ]; then
-        if command -v dpkg > /dev/null 2>&1 && dpkg -s apache2 > /dev/null 2>&1; then
-            detected=true
-        elif command -v rpm > /dev/null 2>&1 && rpm -q httpd > /dev/null 2>&1; then
-            detected=true
-        fi
+    if cmd_exists systemctl && systemctl list-unit-files --type=service 2> /dev/null | grep -qiE '^(apache2|httpd)\.service'; then
+        return 0
     fi
 
-    if [ "$detected" = false ] && command -v pgrep > /dev/null 2>&1; then
-        if pgrep -x apache2 > /dev/null 2>&1 || pgrep -x httpd > /dev/null 2>&1; then
-            detected=true
-        fi
+    if cmd_exists dpkg && dpkg -s apache2 > /dev/null 2>&1; then
+        return 0
+    fi
+    if cmd_exists rpm && rpm -q httpd > /dev/null 2>&1; then
+        return 0
     fi
 
-    [ "$detected" = true ]
+    if cmd_exists pgrep && { pgrep -x apache2 > /dev/null 2>&1 || pgrep -x httpd > /dev/null 2>&1; }; then
+        return 0
+    fi
+
+    return 1
 }
 
 detect_nginx() {
-    local detected=false
-
-    if command -v nginx > /dev/null 2>&1; then
-        detected=true
+    if cmd_exists nginx; then
+        return 0
     fi
 
-    if [ "$detected" = false ] && [ -d /etc/nginx ]; then
-        detected=true
+    if [ -d /etc/nginx ]; then
+        return 0
     fi
 
-    if [ "$detected" = false ] && command -v systemctl > /dev/null 2>&1; then
-        if systemctl list-unit-files --type=service 2> /dev/null | grep -qi '^nginx\.service'; then
-            detected=true
-        fi
+    if cmd_exists systemctl && systemctl list-unit-files --type=service 2> /dev/null | grep -qi '^nginx\.service'; then
+        return 0
     fi
 
-    if [ "$detected" = false ]; then
-        if command -v dpkg > /dev/null 2>&1 && dpkg -s nginx > /dev/null 2>&1; then
-            detected=true
-        elif command -v rpm > /dev/null 2>&1 && rpm -q nginx > /dev/null 2>&1; then
-            detected=true
-        fi
+    if cmd_exists dpkg && dpkg -s nginx > /dev/null 2>&1; then
+        return 0
+    fi
+    if cmd_exists rpm && rpm -q nginx > /dev/null 2>&1; then
+        return 0
     fi
 
-    if [ "$detected" = false ] && command -v pgrep > /dev/null 2>&1; then
-        if pgrep -x nginx > /dev/null 2>&1; then
-            detected=true
-        fi
+    if cmd_exists pgrep && pgrep -x nginx > /dev/null 2>&1; then
+        return 0
     fi
 
-    [ "$detected" = true ]
+    return 1
 }
 
-if detect_apache; then
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --server=*)
+                server_hint="${1#*=}"
+                ;;
+            --server)
+                shift
+                if [ "$#" -eq 0 ]; then
+                    error_exit "Missing value for --server (apache|nginx|both)."
+                fi
+                server_hint="$1"
+                ;;
+            *)
+                error_exit "Unknown argument: $1"
+                ;;
+        esac
+        shift
+    done
+}
+
+server_hint_normalized() {
+    case "$server_hint" in
+        apache|nginx|both|"")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+detection_debug() {
+    local apache2_bin apachectl_bin httpd_bin nginx_bin
+    apache2_bin=$(command -v apache2 2> /dev/null || true)
+    apachectl_bin=$(command -v apachectl 2> /dev/null || command -v apache2ctl 2> /dev/null || true)
+    httpd_bin=$(command -v httpd 2> /dev/null || true)
+    nginx_bin=$(command -v nginx 2> /dev/null || true)
+
+    log "Detection summary: hint=${server_hint:-none} apache=${apache_present} nginx=${nginx_present}"
+    log " - PATH: $PATH"
+    log " - binaries: apache2=${apache2_bin:-missing}, apachectl=${apachectl_bin:-missing}, httpd=${httpd_bin:-missing}, nginx=${nginx_bin:-missing}"
+    log " - config dirs: /etc/apache2=$(if [ -d /etc/apache2 ]; then echo present; else echo missing; fi), /etc/httpd=$(if [ -d /etc/httpd ]; then echo present; else echo missing; fi), /etc/nginx=$(if [ -d /etc/nginx ]; then echo present; else echo missing; fi)"
+}
+
+parse_args "$@"
+if ! server_hint_normalized; then
+    error_exit "Invalid server hint '$server_hint'. Use apache, nginx, or both."
+fi
+
+case "$server_hint" in
+    apache)
+        apache_present=true
+        ;;
+    nginx)
+        nginx_present=true
+        ;;
+    both)
+        apache_present=true
+        nginx_present=true
+        ;;
+    *)
+        ;;
+esac
+
+if [ "$apache_present" = false ] && detect_apache; then
     apache_present=true
 fi
 
-if detect_nginx; then
+if [ "$nginx_present" = false ] && detect_nginx; then
     nginx_present=true
 fi
+
+detection_debug
 
 if [ "$apache_present" = false ] && [ "$nginx_present" = false ]; then
     error_exit "No supported web server found."
