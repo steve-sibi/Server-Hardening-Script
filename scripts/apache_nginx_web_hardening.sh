@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 if [ "$EUID" -ne 0 ]; then
     echo "[ERROR] Please run this script as root."
@@ -78,9 +79,13 @@ nginx_present=false
 
 if command -v apache2 > /dev/null 2>&1 || command -v apachectl > /dev/null 2>&1 || command -v httpd > /dev/null 2>&1; then
     apache_present=true
+elif [ -d /etc/apache2 ] || [ -d /etc/httpd ]; then
+    apache_present=true
 fi
 
 if command -v nginx > /dev/null 2>&1; then
+    nginx_present=true
+elif [ -d /etc/nginx ]; then
     nginx_present=true
 fi
 
