@@ -152,7 +152,15 @@ jobs:
           SERVICE: ${{ matrix.service }}
         run: |
           container="${{ matrix.name }}"
-          docker exec "$container" bash -lc "set -euo pipefail; ${INSTALL_CMD}; systemctl enable --now ${SERVICE}"
+          docker exec \
+            -e INSTALL_CMD="$INSTALL_CMD" \
+            -e SERVICE="$SERVICE" \
+            "$container" bash -s <<'EOF'
+          set -euo pipefail
+          # Execute the per-matrix install command (may contain multiple lines)
+          eval "$INSTALL_CMD"
+          systemctl enable --now "$SERVICE"
+          EOF
 
       - name: Copy repository into container
         run: |
