@@ -92,7 +92,7 @@ detect_apache() {
     fi
 
     if [ "$detected" = false ] && command -v systemctl > /dev/null 2>&1; then
-        if systemctl list-unit-files --type=service 2>/dev/null | grep -qiE '^(apache2|httpd)\.service'; then
+        if systemctl list-unit-files --type=service 2> /dev/null | grep -qiE '^(apache2|httpd)\.service'; then
             detected=true
         fi
     fi
@@ -126,7 +126,7 @@ detect_nginx() {
     fi
 
     if [ "$detected" = false ] && command -v systemctl > /dev/null 2>&1; then
-        if systemctl list-unit-files --type=service 2>/dev/null | grep -qi '^nginx\.service'; then
+        if systemctl list-unit-files --type=service 2> /dev/null | grep -qi '^nginx\.service'; then
             detected=true
         fi
     fi
