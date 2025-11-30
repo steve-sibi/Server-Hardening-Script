@@ -145,23 +145,6 @@ jobs:
               sleep 2
             done
           '
-
-      - name: Install web server
-        env:
-          INSTALL_CMD: ${{ matrix.install_cmd }}
-          SERVICE: ${{ matrix.service }}
-        run: |
-          container="${{ matrix.name }}"
-          docker exec \
-            -e INSTALL_CMD="$INSTALL_CMD" \
-            -e SERVICE="$SERVICE" \
-            "$container" bash -s <<'EOF'
-          set -euo pipefail
-          # Execute the per-matrix install command (may contain multiple lines)
-          eval "$INSTALL_CMD"
-          systemctl enable --now "$SERVICE"
-          EOF
-
       - name: Copy repository into container
         run: |
           container="${{ matrix.name }}"
@@ -172,12 +155,17 @@ jobs:
           container="${{ matrix.name }}"
           docker exec \
             -e SERVER_HINT="${{ matrix.server }}" \
+            -e INSTALL_CMD="${{ matrix.install_cmd }}" \
+            -e SERVICE="${{ matrix.service }}" \
             -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
             "$container" bash -lc '
               set -euo pipefail
               cd /srv/hardening
+              echo "Installing web server using INSTALL_CMD..."
+              eval "$INSTALL_CMD"
+              systemctl enable --now "$SERVICE"
               chmod +x scripts/apache_nginx_web_hardening.sh
-              ./scripts/apache_nginx_web_hardening.sh
+              ./scripts/apache_nginx_web_hardening.sh --server "${SERVER_HINT:-}"
             '
 
       - name: Validate hardening

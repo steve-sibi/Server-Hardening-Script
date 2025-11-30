@@ -78,9 +78,6 @@ EOF
     log "Nginx web server hardened. Config written to $nginx_conf"
 }
 
-apache_present=false
-nginx_present=false
-
 server_hint="${SERVER_HINT:-}"
 
 detect_apache() {
@@ -169,6 +166,11 @@ server_hint_normalized() {
     esac
 }
 
+apache_present=false
+nginx_present=false
+force_apache=false
+force_nginx=false
+
 detection_debug() {
     local apache2_bin apachectl_bin httpd_bin nginx_bin
     apache2_bin=$(command -v apache2 2> /dev/null || true)
@@ -176,7 +178,7 @@ detection_debug() {
     httpd_bin=$(command -v httpd 2> /dev/null || true)
     nginx_bin=$(command -v nginx 2> /dev/null || true)
 
-    log "Detection summary: hint=${server_hint:-none} apache=${apache_present} nginx=${nginx_present}"
+    log "Detection summary: hint=${server_hint:-none} force_apache=${force_apache} force_nginx=${force_nginx} apache=${apache_present} nginx=${nginx_present}"
     log " - PATH: $PATH"
     log " - binaries: apache2=${apache2_bin:-missing}, apachectl=${apachectl_bin:-missing}, httpd=${httpd_bin:-missing}, nginx=${nginx_bin:-missing}"
     log " - config dirs: /etc/apache2=$(if [ -d /etc/apache2 ]; then echo present; else echo missing; fi), /etc/httpd=$(if [ -d /etc/httpd ]; then echo present; else echo missing; fi), /etc/nginx=$(if [ -d /etc/nginx ]; then echo present; else echo missing; fi)"
@@ -189,23 +191,41 @@ fi
 
 case "$server_hint" in
     apache)
-        apache_present=true
+        force_apache=true
         ;;
     nginx)
-        nginx_present=true
+        force_nginx=true
         ;;
     both)
-        apache_present=true
-        nginx_present=true
+        force_apache=true
+        force_nginx=true
         ;;
     *) ;;
 esac
 
-if [ "$apache_present" = false ] && detect_apache; then
+if [ "$force_apache" = true ]; then
+    if detect_apache; then
+        apache_present=true
+    else
+        detection_debug
+        error_exit "Apache hint provided but Apache was not detected. Please install apache2/httpd and ensure it is accessible."
+    fi
+fi
+
+if [ "$force_nginx" = true ]; then
+    if detect_nginx; then
+        nginx_present=true
+    else
+        detection_debug
+        error_exit "Nginx hint provided but Nginx was not detected. Please install nginx and ensure it is accessible."
+    fi
+fi
+
+if [ "$force_apache" = false ] && detect_apache; then
     apache_present=true
 fi
 
-if [ "$nginx_present" = false ] && detect_nginx; then
+if [ "$force_nginx" = false ] && detect_nginx; then
     nginx_present=true
 fi
 
