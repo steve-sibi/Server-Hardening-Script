@@ -160,7 +160,7 @@ parse_args() {
 
 server_hint_normalized() {
     case "$server_hint" in
-        apache|nginx|both|"")
+        apache | nginx | both | "")
             return 0
             ;;
         *)
@@ -198,8 +198,7 @@ case "$server_hint" in
         apache_present=true
         nginx_present=true
         ;;
-    *)
-        ;;
+    *) ;;
 esac
 
 if [ "$apache_present" = false ] && detect_apache; then
