@@ -74,10 +74,14 @@ Ensure you are running the script as `root` or using `sudo` to allow it to make 
 
 ## CI Workflows
 
-GitHub Actions workflows run only when their related files change:
-- `server_hardening.yml` triggers on `scripts/server_hardening.sh` changes.
-- `user_account_hardening.yml` triggers on `scripts/user_account_hardening.sh` changes.
-- `log_monitoring.yml` triggers on `scripts/log_monitoring.sh` changes and validates rsyslog/logrotate/logwatch in Debian, Ubuntu, and Rocky containers.
+Each script has a dedicated GitHub Actions workflow that runs on pull requests and pushes to `main` when the script or its workflow file changes. Highlights:
+
+- **Server Hardening Tests (`.github/workflows/server_hardening.yml`)**: Lints `scripts/server_hardening.sh` with ShellCheck/shfmt, then runs it in systemd-backed containers for Ubuntu 22.04, Debian 12, and Rocky 9. It bootstraps SSH + the appropriate firewall, executes `./scripts/server_hardening.sh --skip-updates`, and asserts SSH listens on 2200/tcp, firewall rules are in place, Fail2Ban is enabled, and key sysctls are set; on failures it prints the hardening logs.
+- **Apache/Nginx Web Hardening Tests (`.github/workflows/apache_nginx_web_hardening.yml`)**: Lints `scripts/apache_nginx_web_hardening.sh`, installs Apache or Nginx on Ubuntu/Debian/Rocky matrices, runs the script with server hints, and verifies security header drop-ins exist, config tests pass, and `curl -I` returns `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: default-src 'self'`.
+- **User Account Hardening (`.github/workflows/user_account_hardening.yml`)**: Spins up an Ubuntu 22.04 container with a dormant user, runs `scripts/user_account_hardening.sh --threshold 0`, and checks the user is locked plus `/etc/login.defs` and `pwquality` defaults enforce the intended aging and complexity values.
+- **Log Monitoring Tests (`.github/workflows/log_monitoring.yml`)**: Runs `scripts/log_monitoring.sh` on Ubuntu 22.04, Debian 12, and Rocky 9 containers, tolerates rsyslog restarts if needed, and validates the logrotate drop-in/state file plus logwatch outputs at `/var/log/logwatch/` (ensuring `logwatch-latest.log` is non-empty).
+
+See `docs/workflows.md` for a readable breakdown of each workflow.
 
 ## Contributing
 
@@ -92,5 +96,4 @@ Contributions are welcome! These implementations are based off experiences I hav
 - Open a Pull Request.
 
 Please ensure your code follows the existing style and includes comments where necessary.
-
 
