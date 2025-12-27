@@ -6,10 +6,10 @@ The primary goal is to reduce the attack surface and add operational visibility 
 
 ## Features
 
-- **Server hardening (scripts/server_hardening.sh)**: System updates, service pruning, UFW/Firewalld rules, SSH hardening (defaults to port 2200), permissions tightening, automatic security updates, Fail2Ban, kernel sysctls, and idempotent re-runs.
+- **Server hardening (scripts/server_hardening.sh)**: System updates, service pruning, UFW/Firewalld rules, SSH hardening (defaults to port 2200), permissions tightening, automatic security updates, Fail2Ban, kernel sysctls, optional log monitoring (rsyslog/logrotate/logwatch), and idempotent re-runs.
 - **User/account hardening (scripts/user_account_hardening.sh)**: Password aging, pwquality defaults, and locking stale accounts.
 - **Web server hardening (scripts/apache_nginx_web_hardening.sh)**: Apache/Nginx security headers and TLS defaults.
-- **Log monitoring (scripts/log_monitoring.sh)**:
+- **Log monitoring (integrated into scripts/server_hardening.sh)**:
   - Detects Debian/Ubuntu vs RHEL/Rocky, installs rsyslog + logrotate (and EPEL on RHEL for logwatch), and starts rsyslog.
   - Writes a distro-aware logrotate policy for system/auth logs with `su` and `create` to avoid permission errors; pre-creates log files with correct ownership.
   - Uses a dedicated logrotate state file under `/var/lib/logrotate/hardening.status`.
@@ -48,11 +48,12 @@ The primary goal is to reduce the attack surface and add operational visibility 
     - Interactive mode: when run from a terminal with no flags, the script prompts you to pick which hardening modules to apply.
     - Automation: use `--non-interactive` (and/or `--skip-*`) to avoid prompts in CI or unattended runs.
 
-4. **Run the Log Monitoring Script (rsyslog + logrotate + logwatch):**
+4. **Enable Log Monitoring (rsyslog + logrotate + logwatch) (Optional):**
 
-    ```bash
-    sudo ./log_monitoring.sh
-    ```
+    - As part of `server_hardening.sh`: run interactively and select log monitoring, or run:
+      ```bash
+      sudo ./server_hardening.sh --enable-log-monitoring
+      ```
 
     - Debian/Ubuntu: rotates `/var/log/syslog` and `/var/log/auth.log` as root:adm.
     - RHEL/Rocky: rotates `/var/log/messages` and `/var/log/secure` as root:root and enables EPEL for logwatch.
@@ -79,11 +80,9 @@ Ensure you are running the script as `root` or using `sudo` to allow it to make 
 
 Each script has a dedicated GitHub Actions workflow that runs on pull requests and pushes to `main` when the script or its workflow file changes. Highlights:
 
-- **Server Hardening Tests (`.github/workflows/server_hardening.yml`)**: Lints `scripts/server_hardening.sh` with ShellCheck/shfmt, then runs it in systemd-backed containers for Ubuntu 22.04, Debian 12, and Rocky 9. It bootstraps SSH + the appropriate firewall, executes `./scripts/server_hardening.sh --skip-updates`, and asserts SSH listens on 2200/tcp, firewall rules are in place, Fail2Ban is enabled, and key sysctls are set; on failures it prints the hardening logs.
+- **Server Hardening Tests (`.github/workflows/server_hardening.yml`)**: Lints `scripts/server_hardening.sh` with ShellCheck/shfmt, then runs it in systemd-backed containers for Ubuntu 22.04, Debian 12, and Rocky 9. It bootstraps SSH + the appropriate firewall, executes `./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring`, and asserts SSH listens on 2200/tcp, firewall rules are in place, Fail2Ban is enabled, key sysctls are set, and log monitoring outputs exist (rsyslog/logrotate/logwatch); on failures it prints the hardening logs.
 - **Apache/Nginx Web Hardening Tests (`.github/workflows/apache_nginx_web_hardening.yml`)**: Lints `scripts/apache_nginx_web_hardening.sh`, installs Apache or Nginx on Ubuntu/Debian/Rocky matrices, runs the script with server hints, and verifies security header drop-ins exist, config tests pass, and `curl -I` returns `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: default-src 'self'`.
 - **User Account Hardening (`.github/workflows/user_account_hardening.yml`)**: Spins up an Ubuntu 22.04 container with a dormant user, runs `scripts/user_account_hardening.sh --threshold 0`, and checks the user is locked plus `/etc/login.defs` and `pwquality` defaults enforce the intended aging and complexity values.
-- **Log Monitoring Tests (`.github/workflows/log_monitoring.yml`)**: Runs `scripts/log_monitoring.sh` on Ubuntu 22.04, Debian 12, and Rocky 9 containers, tolerates rsyslog restarts if needed, and validates the logrotate drop-in/state file plus logwatch outputs at `/var/log/logwatch/` (ensuring `logwatch-latest.log` is non-empty).
-
 See `docs/workflows.md` for a readable breakdown of each workflow.
 
 ## Contributing

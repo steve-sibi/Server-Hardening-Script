@@ -6,8 +6,8 @@ Each script has a dedicated GitHub Actions workflow that runs on pull requests a
 
 - **Purpose:** Lint `scripts/server_hardening.sh` and verify it hardens Ubuntu 22.04, Debian 12, and Rocky 9.
 - **Lint:** Runs ShellCheck and shfmt.
-- **End-to-end:** Boots systemd containers for each distro, installs SSH and the right firewall (UFW or firewalld), then runs `./scripts/server_hardening.sh --skip-updates`.
-- **Assertions:** SSH listens on port 2200, firewall rules allow 2200/tcp, Fail2Ban is enabled and running, and key sysctls are set (e.g., `net.ipv4.tcp_syncookies=1`). If anything fails, the workflow prints `/var/log/server_hardening*.log`.
+- **End-to-end:** Boots systemd containers for each distro, installs SSH and the right firewall (UFW or firewalld), then runs `./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring`.
+- **Assertions:** SSH listens on port 2200, firewall rules allow 2200/tcp, Fail2Ban is enabled and running, key sysctls are set (e.g., `net.ipv4.tcp_syncookies=1`), and log monitoring outputs exist (rsyslog/logrotate/logwatch). If anything fails, the workflow prints `/var/log/server_hardening*.log`.
 
 ## Apache/Nginx Web Hardening Tests (`.github/workflows/apache_nginx_web_hardening.yml`)
 
@@ -22,8 +22,6 @@ Each script has a dedicated GitHub Actions workflow that runs on pull requests a
 - **Flow:** Starts an Ubuntu 22.04 container, installs PAM/password utilities, and creates a dormant test user. Runs the script with `--threshold 0` to immediately treat that user as stale.
 - **Assertions:** The test user is locked (`passwd -S ... L`), `PASS_MAX_DAYS=90`, `PASS_MIN_DAYS=1`, `PASS_WARN_AGE=14` in `/etc/login.defs`, and `/etc/security/pwquality.conf.d/50-hardening.conf` enforces `minlen=12` plus `dcredit/ucredit/ocredit/lcredit = -1`.
 
-## Log Monitoring Tests (`.github/workflows/log_monitoring.yml`)
+## Log Monitoring
 
-- **Purpose:** Validate `scripts/log_monitoring.sh` sets up rsyslog, logrotate, and logwatch on Ubuntu 22.04, Debian 12, and Rocky 9.
-- **End-to-end:** Boots systemd containers, runs the script, and tolerates rsyslog restarts or manual `rsyslogd` fallback if the service needs a nudge in CI.
-- **Assertions:** `/etc/logrotate.d/hardening-logs` exists and runs via `logrotate` with a dedicated state file, rsyslog is healthy, and logwatch outputs exist at `/var/log/logwatch/` with `logwatch-latest.log` non-empty. On failure, it prints the drop-in, recent logwatch output, and rsyslog status.
+Log monitoring (rsyslog/logrotate/logwatch) is validated as part of the server hardening end-to-end job in `.github/workflows/server_hardening.yml`.

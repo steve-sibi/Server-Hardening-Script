@@ -39,6 +39,15 @@ declare -a ADDITIONAL_USERS_TO_LOCK=()
 LOG_FILE="/var/log/server_hardening.log"
 ERROR_LOG="/var/log/server_hardening_error.log"
 
+LOG_MONITORING_LOGROTATE_CONF="/etc/logrotate.d/hardening-logs"
+LOG_MONITORING_LOGWATCH_CONF="/etc/logwatch/conf/logwatch.conf"
+LOG_MONITORING_LOGWATCH_OUTPUT_DIR="/var/log/logwatch"
+LOG_MONITORING_LOGROTATE_STATE="/var/lib/logrotate/hardening.status"
+LOG_MONITORING_RSYSLOG_STATE_DIR="/var/lib/rsyslog"
+LOG_MONITORING_OS_FAMILY=""
+LOG_MONITORING_LOGROTATE_SU_GROUP="root"
+declare -a LOG_MONITORING_LOG_FILES=()
+
 PKG_MANAGER=""
 FIREWALL_TOOL=""
 APT_UPDATED=false
@@ -76,6 +85,9 @@ SKIP_AUTO_UPDATES=false
 SKIP_FAIL2BAN=false
 SKIP_KERNEL=false
 SKIP_USERS=false
+SKIP_LOG_MONITORING=false
+
+LOG_MONITORING_EXPLICIT=false
 
 log() {
     local message
@@ -120,6 +132,8 @@ Usage: sudo ./server_hardening.sh [options]
 Options:
   --interactive				Prompt for hardening selections
   --non-interactive			Do not prompt; run with provided flags/defaults
+  --enable-log-monitoring	Enable log monitoring (rsyslog/logrotate/logwatch)
+  --skip-log-monitoring		Skip log monitoring setup
   --ssh-port <port>		  Set SSH port (default: 2200)
   --allow-port <value>	   Allow additional firewall port/service (e.g. 8080/tcp)
   --disable-service <name>   Add a service (without .service) to disable
@@ -147,6 +161,14 @@ parse_arguments() {
             --non-interactive)
                 FORCE_NON_INTERACTIVE=true
                 INTERACTIVE=false
+                ;;
+            --enable-log-monitoring)
+                SKIP_LOG_MONITORING=false
+                LOG_MONITORING_EXPLICIT=true
+                ;;
+            --skip-log-monitoring)
+                SKIP_LOG_MONITORING=true
+                LOG_MONITORING_EXPLICIT=true
                 ;;
             --ssh-port)
                 local port="${2:-}"
@@ -341,6 +363,7 @@ interactive_configure() {
     prompt_toggle_skip_var "Install/configure Fail2Ban" SKIP_FAIL2BAN
     prompt_toggle_skip_var "Apply kernel hardening (sysctl)" SKIP_KERNEL
     prompt_toggle_skip_var "Manage users/password policies" SKIP_USERS
+    prompt_toggle_skip_var "Set up log monitoring (rsyslog/logrotate/logwatch)" SKIP_LOG_MONITORING
 
     if [ "$SKIP_SSH" = false ]; then
         local port_input=""
@@ -938,6 +961,153 @@ manage_users() {
     log "User account management and password policy enforcement complete."
 }
 
+package_installed() {
+    local pkg="$1"
+    case "$PKG_MANAGER" in
+        apt)
+            dpkg -s "$pkg" > /dev/null 2>&1
+            ;;
+        dnf | yum)
+            rpm -q "$pkg" > /dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+detect_log_monitoring_settings() {
+    LOG_MONITORING_LOG_FILES=()
+    LOG_MONITORING_OS_FAMILY=""
+    LOG_MONITORING_LOGROTATE_SU_GROUP="root"
+
+    case "$PKG_MANAGER" in
+        apt)
+            LOG_MONITORING_OS_FAMILY="debian"
+            LOG_MONITORING_LOG_FILES=(/var/log/syslog /var/log/auth.log)
+            LOG_MONITORING_LOGROTATE_SU_GROUP="adm"
+            ;;
+        dnf | yum)
+            LOG_MONITORING_OS_FAMILY="rhel"
+            LOG_MONITORING_LOG_FILES=(/var/log/messages /var/log/secure)
+            LOG_MONITORING_LOGROTATE_SU_GROUP="root"
+            ;;
+        *)
+            error_exit "Unsupported package manager for log monitoring: $PKG_MANAGER"
+            ;;
+    esac
+}
+
+enable_and_start_rsyslog() {
+    if command -v systemctl > /dev/null 2>&1; then
+        systemctl enable rsyslog > /dev/null 2>&1 || true
+        systemctl start rsyslog > /dev/null 2>&1 || true
+    else
+        log "systemctl not available; please ensure rsyslog is enabled manually."
+    fi
+}
+
+install_rsyslog_stack() {
+    log "Ensuring rsyslog and logrotate are installed..."
+    install_packages rsyslog logrotate
+
+    mkdir -p "$LOG_MONITORING_RSYSLOG_STATE_DIR"
+    touch "$LOG_MONITORING_RSYSLOG_STATE_DIR/imjournal.state"
+    chmod 0755 "$LOG_MONITORING_RSYSLOG_STATE_DIR"
+
+    enable_and_start_rsyslog
+    log "rsyslog installed and running."
+}
+
+configure_log_rotation() {
+    log "Configuring log rotation for system/auth logs at $LOG_MONITORING_LOGROTATE_CONF"
+
+    mkdir -p "$(dirname "$LOG_MONITORING_LOGROTATE_STATE")"
+
+    for logfile in "${LOG_MONITORING_LOG_FILES[@]}"; do
+        touch "$logfile"
+        chown root:"$LOG_MONITORING_LOGROTATE_SU_GROUP" "$logfile" || true
+        chmod 0640 "$logfile" || true
+    done
+
+    local log_file_list
+    log_file_list="$(printf "%s " "${LOG_MONITORING_LOG_FILES[@]}")"
+
+    mkdir -p "$(dirname "$LOG_MONITORING_LOGROTATE_CONF")"
+    cat << EOF > "$LOG_MONITORING_LOGROTATE_CONF"
+$log_file_list{
+    su root $LOG_MONITORING_LOGROTATE_SU_GROUP
+    rotate 7
+    daily
+    create 0640 root $LOG_MONITORING_LOGROTATE_SU_GROUP
+    missingok
+    notifempty
+    compress
+    delaycompress
+    postrotate
+        systemctl reload rsyslog >/dev/null 2>&1 || true
+    endscript
+}
+EOF
+}
+
+validate_logrotate_config() {
+    if ! command -v logrotate > /dev/null 2>&1; then
+        log "logrotate not found; skipping validation."
+        return
+    fi
+
+    log "Validating logrotate configuration..."
+    mkdir -p "$(dirname "$LOG_MONITORING_LOGROTATE_STATE")"
+    if ! logrotate -d -s "$LOG_MONITORING_LOGROTATE_STATE" "$LOG_MONITORING_LOGROTATE_CONF" > /tmp/logrotate-validate.log 2>&1; then
+        log "logrotate dry-run reported issues (see /tmp/logrotate-validate.log); continuing."
+    fi
+}
+
+configure_logwatch() {
+    log "Installing logwatch and configuring daily summary to file..."
+
+    if [ "$LOG_MONITORING_OS_FAMILY" = "rhel" ] && ! package_installed epel-release; then
+        install_packages epel-release
+    fi
+    install_packages logwatch
+
+    mkdir -p "$(dirname "$LOG_MONITORING_LOGWATCH_CONF")" "$LOG_MONITORING_LOGWATCH_OUTPUT_DIR"
+    cat << EOF > "$LOG_MONITORING_LOGWATCH_CONF"
+MailTo = root
+Output = file
+Format = text
+Filename = $LOG_MONITORING_LOGWATCH_OUTPUT_DIR/logwatch.log
+Range = yesterday
+Detail = Med
+EOF
+}
+
+run_logwatch_once() {
+    if ! command -v logwatch > /dev/null 2>&1; then
+        log "logwatch not found; skipping initial run."
+        return
+    fi
+
+    log "Running logwatch once (range: today) to verify output..."
+    if ! logwatch --output file --filename "$LOG_MONITORING_LOGWATCH_OUTPUT_DIR/logwatch-latest.log" --range today --detail Med > /dev/null 2>&1; then
+        log "logwatch initial run reported issues; continuing."
+    fi
+}
+
+setup_log_monitoring() {
+    log "Setting up log monitoring (rsyslog/logrotate/logwatch)..."
+    detect_log_monitoring_settings
+
+    install_rsyslog_stack
+    configure_log_rotation
+    validate_logrotate_config
+    configure_logwatch
+    run_logwatch_once
+
+    log "Log monitoring setup complete."
+}
+
 declare -a HARDENING_STEP_ORDER=(
     updates
     services
@@ -948,6 +1118,7 @@ declare -a HARDENING_STEP_ORDER=(
     fail2ban
     kernel
     users
+    log_monitoring
 )
 
 declare -A HARDENING_STEP_LABEL=(
@@ -960,6 +1131,7 @@ declare -A HARDENING_STEP_LABEL=(
     [fail2ban]="Fail2Ban"
     [kernel]="Kernel hardening"
     [users]="User/password policy"
+    [log_monitoring]="Log monitoring"
 )
 
 declare -A HARDENING_STEP_SKIP_VAR=(
@@ -972,6 +1144,7 @@ declare -A HARDENING_STEP_SKIP_VAR=(
     [fail2ban]="SKIP_FAIL2BAN"
     [kernel]="SKIP_KERNEL"
     [users]="SKIP_USERS"
+    [log_monitoring]="SKIP_LOG_MONITORING"
 )
 
 declare -A HARDENING_STEP_SKIP_FLAG=(
@@ -984,6 +1157,7 @@ declare -A HARDENING_STEP_SKIP_FLAG=(
     [fail2ban]="--skip-fail2ban"
     [kernel]="--skip-kernel"
     [users]="--skip-users"
+    [log_monitoring]="--skip-log-monitoring"
 )
 
 declare -A HARDENING_STEP_FUNCTION=(
@@ -996,6 +1170,7 @@ declare -A HARDENING_STEP_FUNCTION=(
     [fail2ban]="install_fail2ban"
     [kernel]="apply_kernel_hardening"
     [users]="manage_users"
+    [log_monitoring]="setup_log_monitoring"
 )
 
 run_hardening_steps() {
@@ -1078,6 +1253,11 @@ print_hardening_summary() {
     fi
 
     summary_line "User/password policy" "$SKIP_USERS"
+    if [ "$SKIP_LOG_MONITORING" = true ]; then
+        summary_line "Log monitoring" true "use --enable-log-monitoring"
+    else
+        summary_line "Log monitoring" false "logrotate=${LOG_MONITORING_LOGROTATE_CONF} logwatch_dir=${LOG_MONITORING_LOGWATCH_OUTPUT_DIR}"
+    fi
     log "Logs written to $LOG_FILE (errors: $ERROR_LOG)"
 }
 
@@ -1095,6 +1275,9 @@ main() {
     parse_arguments "$@"
     if [ "$FORCE_NON_INTERACTIVE" = false ] && [ "$INTERACTIVE" = false ] && [ "$original_argc" -eq 0 ] && [ -t 0 ]; then
         INTERACTIVE=true
+    fi
+    if [ "$INTERACTIVE" = false ] && [ "$LOG_MONITORING_EXPLICIT" = false ]; then
+        SKIP_LOG_MONITORING=true
     fi
     interactive_configure
     finalize_configuration

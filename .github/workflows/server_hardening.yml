@@ -120,7 +120,7 @@ jobs:
             set -euo pipefail
             cd /srv/hardening
             chmod +x scripts/server_hardening.sh
-            ./scripts/server_hardening.sh --skip-updates
+            ./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring
           '
 
       - name: Validate hardened state
@@ -156,6 +156,40 @@ jobs:
             sysctl net.ipv4.ip_forward
             sysctl net.ipv6.conf.all.disable_ipv6
             sysctl net.ipv4.tcp_syncookies | grep -q "= 1"
+
+            echo "=== Log Monitoring ==="
+            if ! systemctl status rsyslog --no-pager; then
+              systemctl reset-failed rsyslog || true
+              systemctl restart rsyslog || true
+              sleep 5
+              if ! systemctl status rsyslog --no-pager; then
+                echo "systemctl failed to start rsyslog; attempting manual rsyslogd launch for validation..."
+                journalctl -xeu rsyslog || true
+                rsyslogd -N1 || true
+                rsyslogd -n &
+                sleep 3
+              fi
+            fi
+
+            echo "=== logrotate config ==="
+            test -f /etc/logrotate.d/hardening-logs
+            cat /etc/logrotate.d/hardening-logs
+            mkdir -p /var/lib/logrotate
+            LOGROTATE_STATE=/var/lib/logrotate/hardening.status
+            if ! logrotate -v -f -s "$LOGROTATE_STATE" /etc/logrotate.d/hardening-logs; then
+              echo "logrotate exited non-zero (likely warnings); continuing."
+            fi
+            test -f "$LOGROTATE_STATE"
+
+            echo "=== logwatch output ==="
+            if command -v logwatch >/dev/null 2>&1; then
+              logwatch --output file --filename /var/log/logwatch/logwatch.log --range today --detail Med || true
+              logwatch --output file --filename /var/log/logwatch/logwatch-latest.log --range today --detail Med || true
+            fi
+            test -f /var/log/logwatch/logwatch.log
+            test -f /var/log/logwatch/logwatch-latest.log
+            ls -l /var/log/logwatch/
+            test -s /var/log/logwatch/logwatch-latest.log
           '
 
       - name: Output logs on failure
@@ -166,6 +200,12 @@ jobs:
           docker exec "$container" bash -lc 'cat /var/log/server_hardening.log || true'
           echo "---- /var/log/server_hardening_error.log ----"
           docker exec "$container" bash -lc 'cat /var/log/server_hardening_error.log || true'
+          echo "---- /etc/logrotate.d/hardening-logs ----"
+          docker exec "$container" bash -lc 'cat /etc/logrotate.d/hardening-logs || true'
+          echo "---- /var/log/logwatch/logwatch-latest.log ----"
+          docker exec "$container" bash -lc 'tail -n 200 /var/log/logwatch/logwatch-latest.log 2>/dev/null || true'
+          echo "---- rsyslog status ----"
+          docker exec "$container" bash -lc 'systemctl status rsyslog --no-pager || true'
 
       - name: Cleanup
         if: always()
