@@ -20,8 +20,13 @@
 
 set -euo pipefail
 
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 SSH_PORT_DEFAULT=2200
 SSH_PORT="$SSH_PORT_DEFAULT"
+SSH_PORT_EXPLICIT=false
+SSH_DISABLE_PASSWORD_AUTH=true
+EFFECTIVE_SSH_PORT=22
 DISABLE_IPV6=true
 
 declare -a FIREWALL_ALLOWED_PORTS=("ssh" "http" "https")
@@ -37,6 +42,9 @@ ERROR_LOG="/var/log/server_hardening_error.log"
 PKG_MANAGER=""
 FIREWALL_TOOL=""
 APT_UPDATED=false
+
+INTERACTIVE=false
+FORCE_NON_INTERACTIVE=false
 
 ensure_python3() {
     if command -v python3 > /dev/null 2>&1; then
@@ -110,6 +118,8 @@ display_usage() {
 Usage: sudo ./server_hardening.sh [options]
 
 Options:
+  --interactive				Prompt for hardening selections
+  --non-interactive			Do not prompt; run with provided flags/defaults
   --ssh-port <port>		  Set SSH port (default: 2200)
   --allow-port <value>	   Allow additional firewall port/service (e.g. 8080/tcp)
   --disable-service <name>   Add a service (without .service) to disable
@@ -131,6 +141,13 @@ EOF
 parse_arguments() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --interactive)
+                INTERACTIVE=true
+                ;;
+            --non-interactive)
+                FORCE_NON_INTERACTIVE=true
+                INTERACTIVE=false
+                ;;
             --ssh-port)
                 local port="${2:-}"
                 if [[ -z "$port" ]]; then
@@ -140,6 +157,7 @@ parse_arguments() {
                     error_exit "SSH port must be an integer between 1 and 65535."
                 fi
                 SSH_PORT="$port"
+                SSH_PORT_EXPLICIT=true
                 shift
                 ;;
             --allow-port)
@@ -204,6 +222,182 @@ parse_arguments() {
     done
 }
 
+trim_whitespace() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+prompt_yes_no() {
+    local prompt="$1"
+    local default_yes="$2"
+    local answer=""
+
+    while true; do
+        if [ "$default_yes" = true ]; then
+            if ! read -r -p "${prompt} [Y/n]: " answer; then
+                error_exit "Input aborted."
+            fi
+            answer="${answer:-Y}"
+        else
+            if ! read -r -p "${prompt} [y/N]: " answer; then
+                error_exit "Input aborted."
+            fi
+            answer="${answer:-N}"
+        fi
+
+        case "${answer,,}" in
+            y | yes)
+                return 0
+                ;;
+            n | no)
+                return 1
+                ;;
+            *)
+                echo "Please answer y or n."
+                ;;
+        esac
+    done
+}
+
+prompt_toggle_skip_var() {
+    local prompt="$1"
+    local skip_var="$2"
+    local default_run=true
+
+    if [ "${!skip_var}" = true ]; then
+        default_run=false
+    fi
+
+    if prompt_yes_no "$prompt" "$default_run"; then
+        printf -v "$skip_var" 'false'
+    else
+        printf -v "$skip_var" 'true'
+    fi
+}
+
+prompt_append_csv() {
+    local prompt="$1"
+    local target_array_name="$2"
+    local -n target_array="$target_array_name"
+    local input=""
+    local -a parts=()
+
+    if ! read -r -p "$prompt" input; then
+        error_exit "Input aborted."
+    fi
+    input="$(trim_whitespace "$input")"
+    if [ -z "$input" ]; then
+        return
+    fi
+
+    IFS=',' read -r -a parts <<< "$input"
+    for part in "${parts[@]}"; do
+        part="$(trim_whitespace "$part")"
+        [ -z "$part" ] && continue
+        target_array+=("$part")
+    done
+}
+
+array_remove_exact() {
+    local array_name="$1"
+    local needle="$2"
+    local -n array_ref="$array_name"
+    local -a filtered=()
+    local item
+
+    for item in "${array_ref[@]}"; do
+        if [ "$item" != "$needle" ]; then
+            filtered+=("$item")
+        fi
+    done
+
+    array_ref=("${filtered[@]}")
+}
+
+interactive_configure() {
+    if [ "$FORCE_NON_INTERACTIVE" = true ]; then
+        return
+    fi
+
+    if [ "$INTERACTIVE" = false ]; then
+        return
+    fi
+
+    if [ ! -t 0 ]; then
+        error_exit "Interactive mode requires a TTY. Remove --interactive or run this script from a terminal."
+    fi
+
+    log "Interactive mode enabled. Press Enter to accept defaults."
+    log "Warning: SSH hardening may change the SSH port and disable password authentication."
+
+    prompt_toggle_skip_var "Apply system updates" SKIP_UPDATES
+    prompt_toggle_skip_var "Disable unnecessary services" SKIP_SERVICES
+    prompt_toggle_skip_var "Configure firewall (UFW/Firewalld)" SKIP_FIREWALL
+    prompt_toggle_skip_var "Harden SSH (port/root/password auth)" SKIP_SSH
+    prompt_toggle_skip_var "Set secure file permissions" SKIP_PERMISSIONS
+    prompt_toggle_skip_var "Enable automatic security updates" SKIP_AUTO_UPDATES
+    prompt_toggle_skip_var "Install/configure Fail2Ban" SKIP_FAIL2BAN
+    prompt_toggle_skip_var "Apply kernel hardening (sysctl)" SKIP_KERNEL
+    prompt_toggle_skip_var "Manage users/password policies" SKIP_USERS
+
+    if [ "$SKIP_SSH" = false ]; then
+        local port_input=""
+        while true; do
+            if ! read -r -p "SSH port [${SSH_PORT}]: " port_input; then
+                error_exit "Input aborted."
+            fi
+            port_input="$(trim_whitespace "$port_input")"
+            if [ -z "$port_input" ]; then
+                break
+            fi
+            if ! [[ "$port_input" =~ ^[0-9]+$ ]] || ((port_input < 1 || port_input > 65535)); then
+                echo "SSH port must be an integer between 1 and 65535."
+                continue
+            fi
+            SSH_PORT="$port_input"
+            SSH_PORT_EXPLICIT=true
+            break
+        done
+
+        if prompt_yes_no "Disable SSH password authentication (keys only)" "$SSH_DISABLE_PASSWORD_AUTH"; then
+            SSH_DISABLE_PASSWORD_AUTH=true
+        else
+            SSH_DISABLE_PASSWORD_AUTH=false
+        fi
+    fi
+
+    if [ "$SKIP_KERNEL" = false ]; then
+        if prompt_yes_no "Disable IPv6 via sysctl" "$DISABLE_IPV6"; then
+            DISABLE_IPV6=true
+        else
+            DISABLE_IPV6=false
+        fi
+    fi
+
+    if [ "$SKIP_FIREWALL" = false ]; then
+        if ! prompt_yes_no "Allow HTTP (80) through the firewall" true; then
+            array_remove_exact FIREWALL_ALLOWED_PORTS "http"
+        fi
+        if ! prompt_yes_no "Allow HTTPS (443) through the firewall" true; then
+            array_remove_exact FIREWALL_ALLOWED_PORTS "https"
+        fi
+
+        prompt_append_csv "Additional firewall ports/services (comma-separated, e.g. 8080/tcp,dns) [none]: " ADDITIONAL_FIREWALL_PORTS
+    fi
+
+    if [ "$SKIP_SERVICES" = false ]; then
+        prompt_append_csv "Additional services to disable (comma-separated, without .service) [none]: " CUSTOM_SERVICES_TO_DISABLE
+    fi
+    if [ "$SKIP_USERS" = false ]; then
+        prompt_append_csv "Additional user accounts to lock (comma-separated) [none]: " ADDITIONAL_USERS_TO_LOCK
+    fi
+
+    echo
+    log "Selections captured. Continuing with hardening run."
+}
+
 finalize_configuration() {
     if [ "${#CUSTOM_SERVICES_TO_DISABLE[@]}" -gt 0 ]; then
         SERVICES_TO_DISABLE+=("${CUSTOM_SERVICES_TO_DISABLE[@]}")
@@ -214,8 +408,14 @@ finalize_configuration() {
     if [ "${#ADDITIONAL_FIREWALL_PORTS[@]}" -gt 0 ]; then
         FIREWALL_ALLOWED_PORTS+=("${ADDITIONAL_FIREWALL_PORTS[@]}")
     fi
-    if [ "$SSH_PORT" -ne 22 ]; then
-        FIREWALL_ALLOWED_PORTS+=("$SSH_PORT/tcp")
+
+    EFFECTIVE_SSH_PORT="$SSH_PORT"
+    if [ "$SKIP_SSH" = true ] && [ "$SSH_PORT_EXPLICIT" = false ]; then
+        EFFECTIVE_SSH_PORT="$(detect_current_sshd_port)"
+    fi
+
+    if [ "$EFFECTIVE_SSH_PORT" -ne 22 ]; then
+        FIREWALL_ALLOWED_PORTS+=("${EFFECTIVE_SSH_PORT}/tcp")
     fi
 }
 
@@ -437,6 +637,22 @@ restart_ssh_service() {
     log "Restarted $ssh_service service."
 }
 
+detect_current_sshd_port() {
+    local ssh_config="/etc/ssh/sshd_config"
+    local port=""
+
+    if [ -f "$ssh_config" ]; then
+        port="$(awk 'tolower($1) == "port" {print $2; exit}' "$ssh_config" 2> /dev/null || true)"
+    fi
+
+    if [[ "$port" =~ ^[0-9]+$ ]] && ((port >= 1 && port <= 65535)); then
+        echo "$port"
+        return
+    fi
+
+    echo 22
+}
+
 harden_ssh() {
     log "Hardening SSH configuration..."
     local ssh_config="/etc/ssh/sshd_config"
@@ -455,7 +671,11 @@ harden_ssh() {
 
     set_sshd_option "Port" "$SSH_PORT"
     set_sshd_option "PermitRootLogin" "no"
-    set_sshd_option "PasswordAuthentication" "no"
+    if [ "$SSH_DISABLE_PASSWORD_AUTH" = true ]; then
+        set_sshd_option "PasswordAuthentication" "no"
+    else
+        set_sshd_option "PasswordAuthentication" "yes"
+    fi
     set_sshd_option "Protocol" "2"
 
     restart_ssh_service
@@ -539,7 +759,7 @@ configure_fail2ban() {
     cat << EOF > "${jail_dir}/00-server-hardening.conf"
 [sshd]
 enabled = true
-port    = ${SSH_PORT}
+port    = ${EFFECTIVE_SSH_PORT}
 logpath = ${log_path}
 backend = systemd
 maxretry = 5
@@ -718,7 +938,151 @@ manage_users() {
     log "User account management and password policy enforcement complete."
 }
 
+declare -a HARDENING_STEP_ORDER=(
+    updates
+    services
+    firewall
+    ssh
+    permissions
+    auto_updates
+    fail2ban
+    kernel
+    users
+)
+
+declare -A HARDENING_STEP_LABEL=(
+    [updates]="System updates"
+    [services]="Service disablement"
+    [firewall]="Firewall configuration"
+    [ssh]="SSH hardening"
+    [permissions]="File permissions"
+    [auto_updates]="Automatic security updates"
+    [fail2ban]="Fail2Ban"
+    [kernel]="Kernel hardening"
+    [users]="User/password policy"
+)
+
+declare -A HARDENING_STEP_SKIP_VAR=(
+    [updates]="SKIP_UPDATES"
+    [services]="SKIP_SERVICES"
+    [firewall]="SKIP_FIREWALL"
+    [ssh]="SKIP_SSH"
+    [permissions]="SKIP_PERMISSIONS"
+    [auto_updates]="SKIP_AUTO_UPDATES"
+    [fail2ban]="SKIP_FAIL2BAN"
+    [kernel]="SKIP_KERNEL"
+    [users]="SKIP_USERS"
+)
+
+declare -A HARDENING_STEP_SKIP_FLAG=(
+    [updates]="--skip-updates"
+    [services]="--skip-services"
+    [firewall]="--skip-firewall"
+    [ssh]="--skip-ssh"
+    [permissions]="--skip-permissions"
+    [auto_updates]="--skip-auto-updates"
+    [fail2ban]="--skip-fail2ban"
+    [kernel]="--skip-kernel"
+    [users]="--skip-users"
+)
+
+declare -A HARDENING_STEP_FUNCTION=(
+    [updates]="update_system"
+    [services]="disable_services"
+    [firewall]="configure_firewall"
+    [ssh]="harden_ssh"
+    [permissions]="set_secure_permissions"
+    [auto_updates]="enable_auto_updates"
+    [fail2ban]="install_fail2ban"
+    [kernel]="apply_kernel_hardening"
+    [users]="manage_users"
+)
+
+run_hardening_steps() {
+    local step
+    for step in "${HARDENING_STEP_ORDER[@]}"; do
+        local label="${HARDENING_STEP_LABEL[$step]}"
+        local skip_var="${HARDENING_STEP_SKIP_VAR[$step]}"
+        local skip_flag="${HARDENING_STEP_SKIP_FLAG[$step]}"
+        local func="${HARDENING_STEP_FUNCTION[$step]}"
+
+        if [ "${!skip_var}" = true ]; then
+            log "Skipping ${label} (${skip_flag})."
+            continue
+        fi
+
+        log "---- ${label} ----"
+        "$func"
+    done
+}
+
+summary_line() {
+    local label="$1"
+    local skipped="$2"
+    shift 2
+    local details="$*"
+
+    if [ "$skipped" = true ]; then
+        if [ -n "$details" ]; then
+            log " - ${label}: skipped (${details})"
+        else
+            log " - ${label}: skipped"
+        fi
+        return
+    fi
+
+    if [ -n "$details" ]; then
+        log " - ${label}: applied (${details})"
+    else
+        log " - ${label}: applied"
+    fi
+}
+
+print_hardening_summary() {
+    log "----------------- Hardening Summary -----------------"
+
+    summary_line "System updates" "$SKIP_UPDATES" "package-manager=${PKG_MANAGER}"
+    summary_line "Service disablement" "$SKIP_SERVICES" "targets=${SERVICES_TO_DISABLE[*]}"
+
+    if [ "$SKIP_FIREWALL" = true ]; then
+        summary_line "Firewall" true
+    else
+        summary_line "Firewall" false "tool=${FIREWALL_TOOL:-unknown} allowed=${FIREWALL_ALLOWED_PORTS[*]}"
+    fi
+
+    if [ "$SKIP_SSH" = true ]; then
+        summary_line "SSH hardening" true
+    else
+        local ssh_port
+        ssh_port="$(detect_current_sshd_port)"
+        local password_auth_status="enabled"
+        if [ "$SSH_DISABLE_PASSWORD_AUTH" = true ]; then
+            password_auth_status="disabled"
+        fi
+        summary_line "SSH hardening" false "port=${ssh_port} password_auth=${password_auth_status}"
+    fi
+
+    summary_line "File permissions" "$SKIP_PERMISSIONS"
+    summary_line "Automatic security updates" "$SKIP_AUTO_UPDATES"
+
+    if [ "$SKIP_FAIL2BAN" = true ]; then
+        summary_line "Fail2Ban" true
+    else
+        summary_line "Fail2Ban" false "sshd-port=${EFFECTIVE_SSH_PORT}"
+    fi
+
+    if [ "$SKIP_KERNEL" = true ]; then
+        summary_line "Kernel hardening" true
+    else
+        summary_line "Kernel hardening" false "disable_ipv6=${DISABLE_IPV6}"
+    fi
+
+    summary_line "User/password policy" "$SKIP_USERS"
+    log "Logs written to $LOG_FILE (errors: $ERROR_LOG)"
+}
+
 main() {
+    local original_argc=$#
     for arg in "$@"; do
         if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
             display_usage
@@ -729,65 +1093,17 @@ main() {
     require_root
     init_logging
     parse_arguments "$@"
+    if [ "$FORCE_NON_INTERACTIVE" = false ] && [ "$INTERACTIVE" = false ] && [ "$original_argc" -eq 0 ] && [ -t 0 ]; then
+        INTERACTIVE=true
+    fi
+    interactive_configure
     finalize_configuration
     detect_package_manager
 
     log "================= Starting Server Hardening Process ================="
+    run_hardening_steps
 
-    if [ "$SKIP_UPDATES" = true ]; then
-        log "Skipping system updates (--skip-updates)."
-    else
-        update_system
-    fi
-
-    if [ "$SKIP_SERVICES" = true ]; then
-        log "Skipping service disablement (--skip-services)."
-    else
-        disable_services
-    fi
-
-    if [ "$SKIP_FIREWALL" = true ]; then
-        log "Skipping firewall configuration (--skip-firewall)."
-    else
-        configure_firewall
-    fi
-
-    if [ "$SKIP_SSH" = true ]; then
-        log "Skipping SSH hardening (--skip-ssh)."
-    else
-        harden_ssh
-    fi
-
-    if [ "$SKIP_PERMISSIONS" = true ]; then
-        log "Skipping permission updates (--skip-permissions)."
-    else
-        set_secure_permissions
-    fi
-
-    if [ "$SKIP_AUTO_UPDATES" = true ]; then
-        log "Skipping automatic update configuration (--skip-auto-updates)."
-    else
-        enable_auto_updates
-    fi
-
-    if [ "$SKIP_FAIL2BAN" = true ]; then
-        log "Skipping Fail2Ban configuration (--skip-fail2ban)."
-    else
-        install_fail2ban
-    fi
-
-    if [ "$SKIP_KERNEL" = true ]; then
-        log "Skipping kernel hardening (--skip-kernel)."
-    else
-        apply_kernel_hardening
-    fi
-
-    if [ "$SKIP_USERS" = true ]; then
-        log "Skipping user management (--skip-users)."
-    else
-        manage_users
-    fi
-
+    print_hardening_summary
     log "================= Server Hardening Process Complete! ================="
 }
 

@@ -45,6 +45,9 @@ The primary goal is to reduce the attack surface and add operational visibility 
     sudo ./server_hardening.sh
     ```
 
+    - Interactive mode: when run from a terminal with no flags, the script prompts you to pick which hardening modules to apply.
+    - Automation: use `--non-interactive` (and/or `--skip-*`) to avoid prompts in CI or unattended runs.
+
 4. **Run the Log Monitoring Script (rsyslog + logrotate + logwatch):**
 
     ```bash
@@ -96,4 +99,3 @@ Contributions are welcome! These implementations are based off experiences I hav
 - Open a Pull Request.
 
 Please ensure your code follows the existing style and includes comments where necessary.
-
