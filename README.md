@@ -6,8 +6,7 @@ The primary goal is to reduce the attack surface and add operational visibility 
 
 ## Features
 
-- **Server hardening (scripts/server_hardening.sh)**: System updates, service pruning, UFW/Firewalld rules, SSH hardening (defaults to port 2200), permissions tightening, automatic security updates, Fail2Ban, kernel sysctls, optional log monitoring (rsyslog/logrotate/logwatch), and idempotent re-runs.
-- **User/account hardening (scripts/user_account_hardening.sh)**: Password aging, pwquality defaults, and locking stale accounts.
+- **Server hardening (scripts/server_hardening.sh)**: System updates, service pruning, UFW/Firewalld rules, SSH hardening (defaults to port 2200), permissions tightening, automatic security updates, Fail2Ban, kernel sysctls, user account hardening (password policy + optional inactive account locking), optional log monitoring (rsyslog/logrotate/logwatch), and idempotent re-runs.
 - **Web server hardening (scripts/apache_nginx_web_hardening.sh)**: Apache/Nginx security headers and TLS defaults.
 - **Log monitoring (integrated into scripts/server_hardening.sh)**:
   - Detects Debian/Ubuntu vs RHEL/Rocky, installs rsyslog + logrotate (and EPEL on RHEL for logwatch), and starts rsyslog.
@@ -80,9 +79,8 @@ Ensure you are running the script as `root` or using `sudo` to allow it to make 
 
 Each script has a dedicated GitHub Actions workflow that runs on pull requests and pushes to `main` when the script or its workflow file changes. Highlights:
 
-- **Server Hardening Tests (`.github/workflows/server_hardening.yml`)**: Lints `scripts/server_hardening.sh` with ShellCheck/shfmt, then runs it in systemd-backed containers for Ubuntu 22.04, Debian 12, and Rocky 9. It bootstraps SSH + the appropriate firewall, executes `./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring`, and asserts SSH listens on 2200/tcp, firewall rules are in place, Fail2Ban is enabled, key sysctls are set, and log monitoring outputs exist (rsyslog/logrotate/logwatch); on failures it prints the hardening logs.
+- **Server Hardening Tests (`.github/workflows/server_hardening.yml`)**: Lints `scripts/server_hardening.sh` with ShellCheck/shfmt, then runs it in systemd-backed containers for Ubuntu 22.04, Debian 12, and Rocky 9. It bootstraps SSH + the appropriate firewall, executes `./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring --inactive-threshold 0`, and asserts SSH listens on 2200/tcp, firewall rules are in place, Fail2Ban is enabled, key sysctls are set, a dormant test user is locked/expired (user hardening), and log monitoring outputs exist (rsyslog/logrotate/logwatch); on failures it prints the hardening logs.
 - **Apache/Nginx Web Hardening Tests (`.github/workflows/apache_nginx_web_hardening.yml`)**: Lints `scripts/apache_nginx_web_hardening.sh`, installs Apache or Nginx on Ubuntu/Debian/Rocky matrices, runs the script with server hints, and verifies security header drop-ins exist, config tests pass, and `curl -I` returns `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: default-src 'self'`.
-- **User Account Hardening (`.github/workflows/user_account_hardening.yml`)**: Spins up an Ubuntu 22.04 container with a dormant user, runs `scripts/user_account_hardening.sh --threshold 0`, and checks the user is locked plus `/etc/login.defs` and `pwquality` defaults enforce the intended aging and complexity values.
 See `docs/workflows.md` for a readable breakdown of each workflow.
 
 ## Contributing

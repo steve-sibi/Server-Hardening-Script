@@ -101,10 +101,16 @@ jobs:
               apt-get install -y sudo openssh-server ufw iproute2
               systemctl enable ssh
               systemctl start ssh
+              if ! id dormantuser >/dev/null 2>&1; then
+                useradd -m -s /bin/bash dormantuser
+              fi
             else
               dnf install -y sudo openssh-server firewalld which
               systemctl enable sshd
               systemctl start sshd
+              if ! id dormantuser >/dev/null 2>&1; then
+                useradd -m -s /bin/bash dormantuser
+              fi
             fi
           '
 
@@ -120,7 +126,7 @@ jobs:
             set -euo pipefail
             cd /srv/hardening
             chmod +x scripts/server_hardening.sh
-            ./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring
+            ./scripts/server_hardening.sh --non-interactive --skip-updates --enable-log-monitoring --inactive-threshold 0
           '
 
       - name: Validate hardened state
@@ -156,6 +162,22 @@ jobs:
             sysctl net.ipv4.ip_forward
             sysctl net.ipv6.conf.all.disable_ipv6
             sysctl net.ipv4.tcp_syncookies | grep -q "= 1"
+
+            echo "=== User Account Hardening ==="
+            passwd -S dormantuser
+            status=$(passwd -S dormantuser | awk "{print \$2}")
+            [ "$status" = "L" ] || [ "$status" = "LK" ]
+            chage -l dormantuser | tee /tmp/chage.txt
+            grep -Eq "Account expires.*1970" /tmp/chage.txt
+            grep -Eq "^PASS_MAX_DAYS[[:space:]]+90" /etc/login.defs
+            grep -Eq "^PASS_MIN_DAYS[[:space:]]+1" /etc/login.defs
+            grep -Eq "^PASS_WARN_AGE[[:space:]]+14" /etc/login.defs
+            dropin=/etc/security/pwquality.conf.d/99-server-hardening.conf
+            test -f "$dropin"
+            grep -Eq "^minlen[[:space:]]*=[[:space:]]*12" "$dropin"
+            for key in dcredit ucredit ocredit lcredit; do
+              grep -Eq "^${key}[[:space:]]*=[[:space:]]*-1" "$dropin"
+            done
 
             echo "=== Log Monitoring ==="
             if ! systemctl status rsyslog --no-pager; then

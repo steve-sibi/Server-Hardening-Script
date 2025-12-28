@@ -89,6 +89,9 @@ SKIP_LOG_MONITORING=false
 
 LOG_MONITORING_EXPLICIT=false
 
+LOCK_INACTIVE_USERS=false
+USER_INACTIVITY_THRESHOLD=30
+
 log() {
     local message
     message="$(date +'%Y-%m-%d %H:%M:%S') [INFO] $*"
@@ -134,6 +137,8 @@ Options:
   --non-interactive			Do not prompt; run with provided flags/defaults
   --enable-log-monitoring	Enable log monitoring (rsyslog/logrotate/logwatch)
   --skip-log-monitoring		Skip log monitoring setup
+  --lock-inactive-users		Lock inactive local accounts (uid >= 1000)
+  --inactive-threshold <days>	Inactivity threshold in days (default: 30)
   --ssh-port <port>		  Set SSH port (default: 2200)
   --allow-port <value>	   Allow additional firewall port/service (e.g. 8080/tcp)
   --disable-service <name>   Add a service (without .service) to disable
@@ -147,7 +152,7 @@ Options:
   --skip-auto-updates		Skip automatic security update configuration
   --skip-fail2ban			Skip Fail2Ban installation/configuration
   --skip-kernel			  Skip kernel hardening
-  --skip-users			   Skip user/password policy enforcement
+  --skip-users			   Skip user account hardening
   -h, --help				 Display this help message
 EOF
 }
@@ -169,6 +174,21 @@ parse_arguments() {
             --skip-log-monitoring)
                 SKIP_LOG_MONITORING=true
                 LOG_MONITORING_EXPLICIT=true
+                ;;
+            --lock-inactive-users)
+                LOCK_INACTIVE_USERS=true
+                ;;
+            --inactive-threshold)
+                local days="${2:-}"
+                if [[ -z "$days" ]]; then
+                    error_exit "Missing value for --inactive-threshold."
+                fi
+                if ! [[ "$days" =~ ^[0-9]+$ ]]; then
+                    error_exit "--inactive-threshold must be a non-negative integer."
+                fi
+                USER_INACTIVITY_THRESHOLD="$days"
+                LOCK_INACTIVE_USERS=true
+                shift
                 ;;
             --ssh-port)
                 local port="${2:-}"
@@ -353,6 +373,7 @@ interactive_configure() {
 
     log "Interactive mode enabled. Press Enter to accept defaults."
     log "Warning: SSH hardening may change the SSH port and disable password authentication."
+    log "Warning: Inactive account locking can lock real user accounts; enable it only when you understand the impact."
 
     prompt_toggle_skip_var "Apply system updates" SKIP_UPDATES
     prompt_toggle_skip_var "Disable unnecessary services" SKIP_SERVICES
@@ -362,7 +383,7 @@ interactive_configure() {
     prompt_toggle_skip_var "Enable automatic security updates" SKIP_AUTO_UPDATES
     prompt_toggle_skip_var "Install/configure Fail2Ban" SKIP_FAIL2BAN
     prompt_toggle_skip_var "Apply kernel hardening (sysctl)" SKIP_KERNEL
-    prompt_toggle_skip_var "Manage users/password policies" SKIP_USERS
+    prompt_toggle_skip_var "Apply user account hardening" SKIP_USERS
     prompt_toggle_skip_var "Set up log monitoring (rsyslog/logrotate/logwatch)" SKIP_LOG_MONITORING
 
     if [ "$SKIP_SSH" = false ]; then
@@ -414,6 +435,27 @@ interactive_configure() {
         prompt_append_csv "Additional services to disable (comma-separated, without .service) [none]: " CUSTOM_SERVICES_TO_DISABLE
     fi
     if [ "$SKIP_USERS" = false ]; then
+        if prompt_yes_no "Lock inactive local user accounts (uid >= 1000)" "$LOCK_INACTIVE_USERS"; then
+            LOCK_INACTIVE_USERS=true
+            local threshold_input=""
+            while true; do
+                if ! read -r -p "Inactivity threshold in days [${USER_INACTIVITY_THRESHOLD}]: " threshold_input; then
+                    error_exit "Input aborted."
+                fi
+                threshold_input="$(trim_whitespace "$threshold_input")"
+                if [ -z "$threshold_input" ]; then
+                    break
+                fi
+                if ! [[ "$threshold_input" =~ ^[0-9]+$ ]]; then
+                    echo "Threshold must be a non-negative integer."
+                    continue
+                fi
+                USER_INACTIVITY_THRESHOLD="$threshold_input"
+                break
+            done
+        else
+            LOCK_INACTIVE_USERS=false
+        fi
         prompt_append_csv "Additional user accounts to lock (comma-separated) [none]: " ADDITIONAL_USERS_TO_LOCK
     fi
 
@@ -886,6 +928,94 @@ disable_unnecessary_accounts() {
     done
 }
 
+lock_inactive_accounts() {
+    local threshold_days="$1"
+
+    if ! command -v lastlog > /dev/null 2>&1; then
+        error_exit "lastlog is required to lock inactive accounts."
+    fi
+    if ! command -v getent > /dev/null 2>&1; then
+        error_exit "getent is required to lock inactive accounts."
+    fi
+    if ! command -v usermod > /dev/null 2>&1; then
+        error_exit "usermod is required to lock inactive accounts."
+    fi
+    if ! command -v chage > /dev/null 2>&1; then
+        error_exit "chage is required to expire inactive accounts."
+    fi
+
+    log "Evaluating user accounts inactive for at least ${threshold_days} days..."
+
+    local tmp_all tmp_inactive
+    tmp_all="$(mktemp)" || error_exit "Unable to create temporary file."
+    tmp_inactive="$(mktemp)" || {
+        rm -f "$tmp_all"
+        error_exit "Unable to create temporary file."
+    }
+
+    if ! lastlog 2> /dev/null | tail -n +2 | awk '{print $1}' | sort -u > "$tmp_all"; then
+        rm -f "$tmp_all" "$tmp_inactive"
+        error_exit "Failed to read the lastlog database."
+    fi
+
+    if ! lastlog -b "$threshold_days" 2> /dev/null | tail -n +2 | awk '{print $1}' | sort -u > "$tmp_inactive"; then
+        rm -f "$tmp_all" "$tmp_inactive"
+        error_exit "Failed to determine inactive users from lastlog."
+    fi
+
+    local -a inactive_users=()
+    mapfile -t inactive_users < <(comm -12 "$tmp_all" "$tmp_inactive")
+    local status=$?
+    rm -f "$tmp_all" "$tmp_inactive"
+    if [ $status -ne 0 ]; then
+        error_exit "Unable to compute inactive account list."
+    fi
+
+    if [ ${#inactive_users[@]} -eq 0 ]; then
+        log "No eligible inactive local accounts were found."
+        return
+    fi
+
+    local user
+    for user in "${inactive_users[@]}"; do
+        [ -z "$user" ] && continue
+
+        local passwd_entry
+        if ! passwd_entry="$(getent passwd "$user")"; then
+            log "Skipping unknown user ${user}."
+            continue
+        fi
+
+        local uid shell
+        uid="$(echo "$passwd_entry" | cut -d: -f3)"
+        shell="$(echo "$passwd_entry" | cut -d: -f7)"
+
+        if [ "$uid" -lt 1000 ] || [ "$user" = "nobody" ]; then
+            log "Skipping system account ${user} (uid ${uid})."
+            continue
+        fi
+
+        case "$shell" in
+            */nologin | /bin/false)
+                log "Skipping service account ${user} (shell ${shell})."
+                continue
+                ;;
+        esac
+
+        local lock_status
+        lock_status="$(passwd -S "$user" 2> /dev/null | awk '{print $2}' || true)"
+        if [[ "$lock_status" == "L" || "$lock_status" == "LK" ]]; then
+            log "User ${user} is already locked."
+        else
+            usermod -L "$user" || error_exit "Failed to lock user ${user}."
+            log "Locked user ${user}."
+        fi
+
+        chage -E 0 "$user" || error_exit "Failed to expire account ${user}."
+        log "Expired account ${user}."
+    done
+}
+
 update_login_defs_setting() {
     local key="$1"
     local value="$2"
@@ -903,6 +1033,27 @@ update_login_defs_setting() {
     fi
 }
 
+ensure_pam_pwquality_installed() {
+    if compgen -G '/lib*/security/pam_pwquality.so' > /dev/null; then
+        return
+    fi
+    if compgen -G '/usr/lib*/security/pam_pwquality.so' > /dev/null; then
+        return
+    fi
+
+    case "$PKG_MANAGER" in
+        apt)
+            install_packages libpam-pwquality
+            ;;
+        dnf | yum)
+            install_packages libpwquality
+            ;;
+        *)
+            error_exit "Package manager not initialised."
+            ;;
+    esac
+}
+
 enforce_password_policy() {
     log "Enforcing password policies..."
     update_login_defs_setting "PASS_MAX_DAYS" "90"
@@ -918,6 +1069,8 @@ enforce_password_policy() {
         log "No recognised PAM password file found; skipping PAM policy update."
         return
     fi
+
+    ensure_pam_pwquality_installed
 
     if command -v authselect > /dev/null 2>&1; then
         authselect apply-changes || true
@@ -957,6 +1110,11 @@ EOF
 manage_users() {
     log "Managing user accounts and enforcing password policies..."
     disable_unnecessary_accounts
+    if [ "$LOCK_INACTIVE_USERS" = true ]; then
+        lock_inactive_accounts "$USER_INACTIVITY_THRESHOLD"
+    else
+        log "Skipping inactive account locking (disabled). Use --lock-inactive-users or --inactive-threshold to enable."
+    fi
     enforce_password_policy
     log "User account management and password policy enforcement complete."
 }
@@ -1130,7 +1288,7 @@ declare -A HARDENING_STEP_LABEL=(
     [auto_updates]="Automatic security updates"
     [fail2ban]="Fail2Ban"
     [kernel]="Kernel hardening"
-    [users]="User/password policy"
+    [users]="User account hardening"
     [log_monitoring]="Log monitoring"
 )
 
@@ -1252,7 +1410,15 @@ print_hardening_summary() {
         summary_line "Kernel hardening" false "disable_ipv6=${DISABLE_IPV6}"
     fi
 
-    summary_line "User/password policy" "$SKIP_USERS"
+    if [ "$SKIP_USERS" = true ]; then
+        summary_line "User account hardening" true
+    else
+        local inactive_locking="disabled"
+        if [ "$LOCK_INACTIVE_USERS" = true ]; then
+            inactive_locking="enabled(threshold=${USER_INACTIVITY_THRESHOLD}d)"
+        fi
+        summary_line "User account hardening" false "inactive_locking=${inactive_locking} lock_list=${UNNECESSARY_USERS[*]}"
+    fi
     if [ "$SKIP_LOG_MONITORING" = true ]; then
         summary_line "Log monitoring" true "use --enable-log-monitoring"
     else
