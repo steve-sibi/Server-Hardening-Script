@@ -31,6 +31,7 @@ jobs:
         run: shfmt -i 4 -ci -sr -d scripts/apache_nginx_web_hardening.sh
 
   e2e:
+    name: e2e (${{ matrix.name }})
     needs: lint
     runs-on: ubuntu-latest
     strategy:
